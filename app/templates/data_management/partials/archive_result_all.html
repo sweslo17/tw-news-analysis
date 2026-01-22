@@ -1,0 +1,60 @@
+<!-- Archive All Sources Result Component -->
+{% set total_archived = results|sum(attribute='archived_count') %}
+{% set total_freed = results|sum(attribute='freed_space_mb') %}
+
+<div class="bg-white rounded-lg p-6 border
+    {% if total_archived > 0 %}border-green-200 bg-green-50{% else %}border-gray-200 bg-gray-50{% endif %}">
+
+    {% if total_archived > 0 %}
+    <!-- Success Header -->
+    <div class="flex items-start gap-3 mb-4">
+        <svg class="w-6 h-6 text-green-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+        </svg>
+        <div>
+            <h3 class="font-semibold text-green-800">Archive Completed - All Sources</h3>
+            <p class="text-sm text-green-700 mt-1">
+                Total: <strong>{{ "{:,}".format(total_archived) }}</strong> articles archived,
+                freed approximately <strong>{{ "%.2f"|format(total_freed) }} MB</strong>
+            </p>
+        </div>
+    </div>
+    {% else %}
+    <!-- No Data Header -->
+    <div class="flex items-start gap-3 mb-4">
+        <svg class="w-6 h-6 text-gray-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+        </svg>
+        <div>
+            <h3 class="font-semibold text-gray-700">No Articles to Archive</h3>
+            <p class="text-sm text-gray-600">No unarchived articles found matching the criteria.</p>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Per-Source Results -->
+    <div class="space-y-2 mt-4">
+        <h4 class="text-sm font-medium text-gray-700">Results by Source:</h4>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-2">
+            {% for result in results %}
+            <div class="flex items-center justify-between p-2 rounded
+                {% if result.archived_count > 0 %}bg-green-100{% elif 'Error' in result.archive_path %}bg-red-100{% else %}bg-gray-100{% endif %}">
+                <span class="font-medium text-sm
+                    {% if result.archived_count > 0 %}text-green-800{% elif 'Error' in result.archive_path %}text-red-800{% else %}text-gray-700{% endif %}">
+                    {{ result.source }}
+                </span>
+                <span class="text-sm
+                    {% if result.archived_count > 0 %}text-green-700{% elif 'Error' in result.archive_path %}text-red-700{% else %}text-gray-500{% endif %}">
+                    {% if 'Error' in result.archive_path %}
+                        Error
+                    {% elif result.archived_count > 0 %}
+                        {{ "{:,}".format(result.archived_count) }} articles ({{ "%.2f"|format(result.freed_space_mb) }} MB)
+                    {% else %}
+                        No new articles
+                    {% endif %}
+                </span>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+</div>

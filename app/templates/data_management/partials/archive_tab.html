@@ -1,0 +1,129 @@
+<!-- Archive Tab Content -->
+<div class="space-y-6">
+    <div>
+        <h2 class="text-xl font-semibold text-gray-800">Archive Raw HTML</h2>
+        <p class="text-sm text-gray-600 mt-1">
+            Archive raw HTML to compressed files and free up database space.
+            Uses additive mode - existing archives are preserved.
+        </p>
+    </div>
+
+    <!-- Archive Form -->
+    <div class="bg-gray-50 rounded-lg p-6 border border-gray-200">
+        <form
+            hx-post="/api/data/archive"
+            hx-target="#archive-result"
+            hx-swap="innerHTML"
+            class="space-y-4"
+        >
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <!-- Source Selection -->
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Source</label>
+                    <select name="source" required
+                        class="w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500">
+                        <option value="">Select a source...</option>
+                        <option value="__all__">All Sources</option>
+                        {% for source in sources %}
+                        <option value="{{ source }}">{{ source }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <!-- Days Filter -->
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Date Filter</label>
+                    <div class="space-y-2">
+                        <label class="flex items-center gap-2">
+                            <input type="radio" name="date_filter" value="days" checked
+                                onchange="document.getElementById('days-input').disabled = false"
+                                class="text-blue-600 focus:ring-blue-500">
+                            <span class="text-gray-700">Older than</span>
+                            <input type="number" id="days-input" name="before_days" value="30" min="1" max="365"
+                                class="w-20 rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500">
+                            <span class="text-gray-600">days</span>
+                        </label>
+                        <label class="flex items-center gap-2">
+                            <input type="radio" name="date_filter" value="all"
+                                onchange="document.getElementById('days-input').disabled = true"
+                                class="text-blue-600 focus:ring-blue-500">
+                            <span class="text-gray-700">All unarchived (no date limit)</span>
+                        </label>
+                    </div>
+                </div>
+
+                <!-- Submit Button -->
+                <div class="flex items-end">
+                    <button type="submit"
+                        class="w-full px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-2 flex items-center justify-center gap-2">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4"></path>
+                        </svg>
+                        Start Archive
+                    </button>
+                </div>
+            </div>
+        </form>
+    </div>
+
+    <!-- Archive Result Container -->
+    <div id="archive-result"></div>
+
+    <!-- Restore Section -->
+    <div class="border-t border-gray-200 pt-6">
+        <div>
+            <h3 class="text-lg font-semibold text-gray-800">Restore Raw HTML</h3>
+            <p class="text-sm text-gray-600 mt-1">
+                Restore archived raw HTML back to the database.
+            </p>
+        </div>
+
+        <div class="bg-gray-50 rounded-lg p-6 border border-gray-200 mt-4">
+            <form
+                hx-post="/api/data/restore"
+                hx-target="#restore-result"
+                hx-swap="innerHTML"
+                class="flex items-end gap-4"
+            >
+                <div class="flex-1">
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Source</label>
+                    <select name="source" required
+                        class="w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500">
+                        <option value="">Select a source...</option>
+                        {% for source in sources %}
+                        <option value="{{ source }}">{{ source }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <button type="submit"
+                    class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 flex items-center gap-2">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"></path>
+                    </svg>
+                    Restore
+                </button>
+            </form>
+        </div>
+
+        <!-- Restore Result Container -->
+        <div id="restore-result" class="mt-4"></div>
+    </div>
+
+    <!-- Info Box -->
+    <div class="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+        <div class="flex items-start gap-3">
+            <svg class="w-5 h-5 text-yellow-500 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+            </svg>
+            <div class="text-sm text-yellow-800">
+                <p class="font-medium">About Archiving</p>
+                <ul class="mt-1 list-disc list-inside text-yellow-700">
+                    <li>Archives are stored as compressed JSON files (gzip)</li>
+                    <li>Each batch contains up to 500 articles</li>
+                    <li>Archiving uses additive mode - new archives don't affect existing ones</li>
+                    <li>Auto-archive runs daily at 01:00 for yesterday's data</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+</div>

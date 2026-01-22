@@ -1,0 +1,112 @@
+<!-- Statistics Tab Content -->
+<div class="space-y-6">
+    <div class="flex items-center justify-between">
+        <h2 class="text-xl font-semibold text-gray-800">Source Statistics</h2>
+        <button
+            hx-get="/partials/data/statistics-tab"
+            hx-target="#tab-content"
+            hx-swap="innerHTML"
+            class="text-sm text-blue-600 hover:text-blue-800 flex items-center gap-1"
+        >
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+            </svg>
+            Refresh
+        </button>
+    </div>
+
+    {% if stats %}
+    <!-- Stats Grid -->
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        {% for stat in stats %}
+        <div class="bg-gray-50 rounded-lg p-4 border border-gray-200">
+            <div class="flex items-center justify-between mb-3">
+                <h3 class="text-lg font-semibold text-gray-800">{{ stat.source }}</h3>
+                <span class="px-2 py-1 text-xs rounded-full
+                    {% if stat.has_raw_html_count > 0 %}bg-green-100 text-green-700{% else %}bg-gray-100 text-gray-600{% endif %}">
+                    {% if stat.has_raw_html_count > 0 %}Active{% else %}Archived{% endif %}
+                </span>
+            </div>
+            <div class="space-y-2 text-sm">
+                <div class="flex justify-between">
+                    <span class="text-gray-600">Total Articles:</span>
+                    <span class="font-medium text-gray-800">{{ "{:,}".format(stat.total_count) }}</span>
+                </div>
+                <div class="flex justify-between">
+                    <span class="text-gray-600">Yesterday:</span>
+                    <span class="font-medium {% if stat.yesterday_count > 0 %}text-green-600{% else %}text-gray-500{% endif %}">
+                        +{{ "{:,}".format(stat.yesterday_count) }}
+                    </span>
+                </div>
+                <div class="flex justify-between">
+                    <span class="text-gray-600">Has Raw HTML:</span>
+                    <span class="font-medium text-blue-600">{{ "{:,}".format(stat.has_raw_html_count) }}</span>
+                </div>
+                <div class="flex justify-between">
+                    <span class="text-gray-600">Archived:</span>
+                    <span class="font-medium text-purple-600">{{ "{:,}".format(stat.archived_count) }}</span>
+                </div>
+            </div>
+            <!-- Storage Indicator -->
+            <div class="mt-3 pt-3 border-t border-gray-200">
+                <div class="flex justify-between text-xs text-gray-500 mb-1">
+                    <span>Archive Progress</span>
+                    <span>
+                        {% set total = stat.has_raw_html_count + stat.archived_count %}
+                        {% if total > 0 %}
+                            {{ ((stat.archived_count / total) * 100)|round(1) }}%
+                        {% else %}
+                            0%
+                        {% endif %}
+                    </span>
+                </div>
+                <div class="w-full bg-gray-200 rounded-full h-2">
+                    {% set total = stat.has_raw_html_count + stat.archived_count %}
+                    {% set percent = ((stat.archived_count / total) * 100) if total > 0 else 0 %}
+                    <div class="bg-purple-500 h-2 rounded-full" style="width: {{ percent }}%"></div>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}
+    <div class="text-center py-12 text-gray-500">
+        <svg class="mx-auto h-12 w-12 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+        </svg>
+        <p class="mt-2">No data sources found</p>
+    </div>
+    {% endif %}
+
+    <!-- Summary Row -->
+    {% if stats %}
+    <div class="bg-blue-50 rounded-lg p-4 border border-blue-200">
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
+            <div>
+                <div class="text-2xl font-bold text-blue-600">
+                    {{ "{:,}".format(stats|sum(attribute='total_count')) }}
+                </div>
+                <div class="text-sm text-gray-600">Total Articles</div>
+            </div>
+            <div>
+                <div class="text-2xl font-bold text-green-600">
+                    +{{ "{:,}".format(stats|sum(attribute='yesterday_count')) }}
+                </div>
+                <div class="text-sm text-gray-600">Yesterday</div>
+            </div>
+            <div>
+                <div class="text-2xl font-bold text-blue-600">
+                    {{ "{:,}".format(stats|sum(attribute='has_raw_html_count')) }}
+                </div>
+                <div class="text-sm text-gray-600">Has Raw HTML</div>
+            </div>
+            <div>
+                <div class="text-2xl font-bold text-purple-600">
+                    {{ "{:,}".format(stats|sum(attribute='archived_count')) }}
+                </div>
+                <div class="text-sm text-gray-600">Archived</div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+</div>

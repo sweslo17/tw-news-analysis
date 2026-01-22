@@ -1,0 +1,162 @@
+<!-- Reparse Tab Content -->
+<div class="space-y-6">
+    <div>
+        <h2 class="text-xl font-semibold text-gray-800">Re-parse Articles</h2>
+        <p class="text-sm text-gray-600 mt-1">
+            Re-parse articles using updated crawler logic. Works with both database and archived raw HTML.
+        </p>
+    </div>
+
+    <!-- Reparse Form -->
+    <div class="bg-gray-50 rounded-lg p-6 border border-gray-200">
+        <div class="space-y-4">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <!-- Source Selection -->
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Source</label>
+                    <select id="reparse-source" name="source" required
+                        hx-get="/api/data/reparse/preview"
+                        hx-target="#preview-result"
+                        hx-swap="innerHTML"
+                        hx-trigger="change"
+                        hx-include="this"
+                        class="w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500">
+                        <option value="">Select a source...</option>
+                        {% for source in sources %}
+                        <option value="{{ source }}">{{ source }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <!-- Preview Result -->
+                <div id="preview-result" class="flex items-end">
+                    <span class="text-sm text-gray-500">Select a source to see available articles</span>
+                </div>
+            </div>
+
+            <!-- Start Button -->
+            <form
+                hx-post="/api/data/reparse/start"
+                hx-target="#reparse-progress"
+                hx-swap="innerHTML"
+                class="flex justify-end"
+            >
+                <input type="hidden" name="source" id="reparse-source-hidden">
+                <button type="submit" id="start-reparse-btn" disabled
+                    class="px-6 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 disabled:bg-gray-400 disabled:cursor-not-allowed flex items-center gap-2">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+                    </svg>
+                    Start Re-parse
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Progress Container -->
+    <div id="reparse-progress"></div>
+
+    <!-- Recent Jobs -->
+    <div class="border-t border-gray-200 pt-6">
+        <h3 class="text-lg font-semibold text-gray-800 mb-4">Recent Jobs</h3>
+
+        {% if recent_jobs %}
+        <div class="space-y-3">
+            {% for job in recent_jobs %}
+            <div class="bg-gray-50 rounded-lg p-4 border border-gray-200">
+                <div class="flex items-center justify-between">
+                    <div class="flex items-center gap-3">
+                        <!-- Status Indicator -->
+                        <span class="w-3 h-3 rounded-full
+                            {% if job.status == 'completed' %}bg-green-500
+                            {% elif job.status == 'running' %}bg-blue-500 animate-pulse
+                            {% elif job.status == 'failed' %}bg-red-500
+                            {% elif job.status == 'cancelled' %}bg-yellow-500
+                            {% else %}bg-gray-400{% endif %}">
+                        </span>
+                        <div>
+                            <span class="font-medium text-gray-800">{{ job.source }}</span>
+                            <span class="text-sm text-gray-500 ml-2">{{ job.status }}</span>
+                        </div>
+                    </div>
+                    <div class="text-sm text-gray-500">
+                        {{ job.processed_count }}/{{ job.total_count }} processed
+                        {% if job.failed_count > 0 %}
+                        <span class="text-red-500">({{ job.failed_count }} failed)</span>
+                        {% endif %}
+                    </div>
+                </div>
+                <!-- Progress Bar for running jobs -->
+                {% if job.status == 'running' %}
+                <div class="mt-2">
+                    <div class="w-full bg-gray-200 rounded-full h-2">
+                        <div class="bg-blue-500 h-2 rounded-full progress-bar" style="width: {{ job.progress_percent }}%"></div>
+                    </div>
+                </div>
+                {% endif %}
+            </div>
+            {% endfor %}
+        </div>
+        {% else %}
+        <div class="text-center py-8 text-gray-500">
+            <p>No recent reparse jobs</p>
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- Info Box -->
+    <div class="bg-blue-50 border border-blue-200 rounded-lg p-4">
+        <div class="flex items-start gap-3">
+            <svg class="w-5 h-5 text-blue-500 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+            </svg>
+            <div class="text-sm text-blue-800">
+                <p class="font-medium">About Re-parsing</p>
+                <ul class="mt-1 list-disc list-inside text-blue-700">
+                    <li>Re-parses articles using the latest crawler logic</li>
+                    <li>Can read raw HTML from database or archived files</li>
+                    <li>Updates title, content, author, tags, and other fields</li>
+                    <li>Original raw HTML is preserved (not modified)</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+// Update hidden field when source changes
+document.getElementById('reparse-source').addEventListener('change', function() {
+    document.getElementById('reparse-source-hidden').value = this.value;
+    document.getElementById('start-reparse-btn').disabled = !this.value;
+});
+
+// Handle preview response
+document.body.addEventListener('htmx:afterRequest', function(evt) {
+    if (evt.detail.pathInfo.requestPath === '/api/data/reparse/preview') {
+        try {
+            const data = JSON.parse(evt.detail.xhr.responseText);
+            const previewHtml = `
+                <div class="bg-white rounded-lg p-3 border border-gray-200 text-sm">
+                    <div class="grid grid-cols-3 gap-2 text-center">
+                        <div>
+                            <div class="text-lg font-bold text-blue-600">${data.total_available.toLocaleString()}</div>
+                            <div class="text-xs text-gray-500">Total Available</div>
+                        </div>
+                        <div>
+                            <div class="text-lg font-bold text-green-600">${data.in_db_count.toLocaleString()}</div>
+                            <div class="text-xs text-gray-500">In Database</div>
+                        </div>
+                        <div>
+                            <div class="text-lg font-bold text-purple-600">${data.archived_count.toLocaleString()}</div>
+                            <div class="text-xs text-gray-500">Archived</div>
+                        </div>
+                    </div>
+                </div>
+            `;
+            document.getElementById('preview-result').innerHTML = previewHtml;
+        } catch (e) {
+            console.error('Failed to parse preview response:', e);
+        }
+    }
+});
+</script>

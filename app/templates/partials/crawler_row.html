@@ -1,0 +1,147 @@
+<!-- Single Crawler Row Partial - Used for HTMX updates -->
+<tr
+    id="crawler-row-{{ crawler.id }}"
+    class="hover:bg-gray-50 transition-colors"
+>
+    <!-- Status Indicator -->
+    <td class="px-6 py-4 whitespace-nowrap">
+        {% if crawler.last_run_status == CrawlerStatus.IDLE %}
+            <span class="inline-block w-3 h-3 rounded-full bg-gray-400" title="Idle"></span>
+        {% elif crawler.last_run_status == CrawlerStatus.RUNNING %}
+            <span class="inline-block w-3 h-3 rounded-full bg-blue-500 status-running" title="Running"></span>
+        {% elif crawler.last_run_status == CrawlerStatus.SUCCESS %}
+            <span class="inline-block w-3 h-3 rounded-full bg-green-500" title="Success"></span>
+        {% else %}
+            <span class="inline-block w-3 h-3 rounded-full bg-red-500" title="Failed"></span>
+        {% endif %}
+    </td>
+
+    <!-- Type Badge -->
+    <td class="px-6 py-4 whitespace-nowrap">
+        {% if crawler.crawler_type.value == 'list' %}
+            <span class="px-2 py-1 text-xs font-medium rounded-full bg-purple-100 text-purple-800">LIST</span>
+        {% else %}
+            <span class="px-2 py-1 text-xs font-medium rounded-full bg-green-100 text-green-800">ARTICLE</span>
+        {% endif %}
+    </td>
+
+    <!-- Source -->
+    <td class="px-6 py-4 whitespace-nowrap">
+        <div class="font-medium text-gray-900">{{ crawler.source }}</div>
+    </td>
+
+    <!-- Crawler Name -->
+    <td class="px-6 py-4 whitespace-nowrap">
+        <div class="font-medium text-gray-900">{{ crawler.display_name }}</div>
+        <div class="text-sm text-gray-500">{{ crawler.name }}</div>
+    </td>
+
+    <!-- Active Toggle -->
+    <td class="px-6 py-4 whitespace-nowrap">
+        <div class="relative inline-block w-10 align-middle select-none">
+            <input
+                type="checkbox"
+                id="toggle-{{ crawler.id }}"
+                class="toggle-checkbox absolute block w-6 h-6 rounded-full bg-white border-4 appearance-none cursor-pointer transition-all duration-200"
+                style="{% if crawler.is_active %}right: 0; border-color: #3B82F6;{% else %}right: 4px; border-color: #D1D5DB;{% endif %}"
+                {% if crawler.is_active %}checked{% endif %}
+                hx-patch="/api/crawlers/{{ crawler.id }}/toggle"
+                hx-target="#crawler-row-{{ crawler.id }}"
+                hx-swap="outerHTML"
+            >
+            <label
+                for="toggle-{{ crawler.id }}"
+                class="toggle-label block overflow-hidden h-6 rounded-full cursor-pointer transition-colors duration-200"
+                style="background-color: {% if crawler.is_active %}#3B82F6{% else %}#D1D5DB{% endif %};"
+            ></label>
+        </div>
+    </td>
+
+    <!-- Interval Input -->
+    <td class="px-6 py-4 whitespace-nowrap">
+        <form
+            hx-patch="/api/crawlers/{{ crawler.id }}/interval"
+            hx-target="#crawler-row-{{ crawler.id }}"
+            hx-swap="outerHTML"
+            hx-trigger="change"
+        >
+            <div class="flex items-center gap-2">
+                <input
+                    type="number"
+                    name="interval_minutes"
+                    value="{{ crawler.interval_minutes }}"
+                    min="1"
+                    class="w-20 px-3 py-1.5 border border-gray-300 rounded-md text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
+                >
+                <span class="text-sm text-gray-500">min</span>
+            </div>
+        </form>
+    </td>
+
+    <!-- Last Run Time -->
+    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
+        {% if crawler.last_run_time %}
+            {{ crawler.last_run_time | local_datetime }}
+        {% else %}
+            <span class="text-gray-400">Never</span>
+        {% endif %}
+    </td>
+
+    <!-- Next Run Time (already in local timezone from APScheduler) -->
+    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
+        {% if crawler.next_run_time and crawler.is_active %}
+            {{ crawler.next_run_time | format_datetime('%H:%M:%S') }}
+        {% else %}
+            <span class="text-gray-400">-</span>
+        {% endif %}
+    </td>
+
+    <!-- New + (Last Run Items Count) -->
+    <td class="px-6 py-4 whitespace-nowrap text-sm">
+        {% if crawler.last_run_items_count > 0 %}
+            <span class="text-green-600 font-medium">+{{ crawler.last_run_items_count }}</span>
+        {% else %}
+            <span class="text-gray-400">0</span>
+        {% endif %}
+    </td>
+
+    <!-- Total Items Count -->
+    <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+        {{ crawler.total_items_count }}
+    </td>
+
+    <!-- Error Log (Click to show modal) -->
+    <td class="px-6 py-4 whitespace-nowrap">
+        {% if crawler.error_log %}
+            <button
+                type="button"
+                onclick="showErrorModal('{{ crawler.display_name }}', {{ crawler.error_log | tojson }})"
+                class="text-red-500 hover:text-red-700 transition-colors cursor-pointer"
+                title="Click to view full error"
+            >
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                </svg>
+            </button>
+        {% else %}
+            <span class="text-gray-400">-</span>
+        {% endif %}
+    </td>
+
+    <!-- Actions -->
+    <td class="px-6 py-4 whitespace-nowrap">
+        <button
+            class="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-md hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+            hx-post="/api/crawlers/{{ crawler.id }}/run"
+            hx-target="#crawler-row-{{ crawler.id }}"
+            hx-swap="outerHTML"
+            {% if crawler.last_run_status == CrawlerStatus.RUNNING %}disabled{% endif %}
+        >
+            {% if crawler.last_run_status == CrawlerStatus.RUNNING %}
+                Running...
+            {% else %}
+                Run Now
+            {% endif %}
+        </button>
+    </td>
+</tr>

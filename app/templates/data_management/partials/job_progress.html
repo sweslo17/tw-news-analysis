@@ -1,0 +1,116 @@
+<!-- Job Progress Component -->
+<div class="bg-white rounded-lg p-6 border border-gray-200 shadow-sm"
+    {% if job.status == 'running' or job.status == 'pending' %}
+    hx-get="/api/data/reparse/status/{{ job.job_id }}"
+    hx-trigger="every 2s"
+    hx-swap="outerHTML"
+    {% endif %}
+>
+    <!-- Header -->
+    <div class="flex items-center justify-between mb-4">
+        <div class="flex items-center gap-3">
+            <!-- Status Icon -->
+            {% if job.status == 'running' %}
+            <div class="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600"></div>
+            {% elif job.status == 'completed' %}
+            <svg class="w-6 h-6 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+            </svg>
+            {% elif job.status == 'failed' %}
+            <svg class="w-6 h-6 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+            </svg>
+            {% elif job.status == 'cancelled' %}
+            <svg class="w-6 h-6 text-yellow-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+            </svg>
+            {% else %}
+            <svg class="w-6 h-6 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+            </svg>
+            {% endif %}
+
+            <div>
+                <h3 class="font-semibold text-gray-800">Re-parsing {{ job.source }}</h3>
+                <p class="text-sm text-gray-500">
+                    {% if job.status == 'running' %}Processing...
+                    {% elif job.status == 'completed' %}Completed
+                    {% elif job.status == 'failed' %}Failed
+                    {% elif job.status == 'cancelled' %}Cancelled
+                    {% else %}Pending{% endif %}
+                </p>
+            </div>
+        </div>
+
+        <!-- Cancel Button for running jobs -->
+        {% if job.status == 'running' %}
+        <button
+            hx-post="/api/data/reparse/cancel/{{ job.job_id }}"
+            hx-swap="none"
+            class="px-3 py-1 text-sm text-red-600 border border-red-300 rounded hover:bg-red-50"
+        >
+            Cancel
+        </button>
+        {% endif %}
+    </div>
+
+    <!-- Progress Bar -->
+    <div class="mb-4">
+        <div class="flex justify-between text-sm text-gray-600 mb-1">
+            <span>Progress</span>
+            <span>{{ job.progress_percent }}%</span>
+        </div>
+        <div class="w-full bg-gray-200 rounded-full h-3">
+            <div class="h-3 rounded-full progress-bar transition-all duration-300
+                {% if job.status == 'completed' %}bg-green-500
+                {% elif job.status == 'failed' %}bg-red-500
+                {% elif job.status == 'cancelled' %}bg-yellow-500
+                {% else %}bg-blue-500{% endif %}"
+                style="width: {{ job.progress_percent }}%">
+            </div>
+        </div>
+    </div>
+
+    <!-- Stats -->
+    <div class="grid grid-cols-3 gap-4 text-center">
+        <div class="bg-gray-50 rounded p-3">
+            <div class="text-xl font-bold text-gray-800">{{ "{:,}".format(job.total_count) }}</div>
+            <div class="text-xs text-gray-500">Total</div>
+        </div>
+        <div class="bg-gray-50 rounded p-3">
+            <div class="text-xl font-bold text-green-600">{{ "{:,}".format(job.processed_count) }}</div>
+            <div class="text-xs text-gray-500">Processed</div>
+        </div>
+        <div class="bg-gray-50 rounded p-3">
+            <div class="text-xl font-bold {% if job.failed_count > 0 %}text-red-600{% else %}text-gray-500{% endif %}">
+                {{ "{:,}".format(job.failed_count) }}
+            </div>
+            <div class="text-xs text-gray-500">Failed</div>
+        </div>
+    </div>
+
+    <!-- Error Log (if any) -->
+    {% if job.error_log %}
+    <div class="mt-4 p-3 bg-red-50 rounded border border-red-200">
+        <div class="flex items-center gap-2 text-sm text-red-700 mb-2">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+            </svg>
+            <span class="font-medium">Errors</span>
+        </div>
+        <pre class="text-xs text-red-600 overflow-x-auto max-h-40 overflow-y-auto">{{ job.error_log }}</pre>
+    </div>
+    {% endif %}
+
+    <!-- Timestamps -->
+    {% if job.started_at or job.completed_at %}
+    <div class="mt-4 pt-4 border-t border-gray-200 text-xs text-gray-500">
+        {% if job.started_at %}
+        <span>Started: {{ job.started_at|format_datetime }}</span>
+        {% endif %}
+        {% if job.completed_at %}
+        <span class="ml-4">Completed: {{ job.completed_at|format_datetime }}</span>
+        {% endif %}
+    </div>
+    {% endif %}
+</div>
