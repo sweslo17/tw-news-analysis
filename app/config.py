@@ -35,6 +35,21 @@ class Settings(BaseSettings):
     auto_archive_hour: int = 1  # Hour to run (24h format)
     auto_archive_minute: int = 0  # Minute to run
 
+    # LLM Provider API Keys
+    groq_api_key: str | None = None
+    anthropic_api_key: str | None = None
+    openai_api_key: str | None = None
+    google_api_key: str | None = None
+
+    # LLM Filter Settings
+    default_llm_provider: str = "groq"  # groq, anthropic, openai, google
+    llm_filter_model: str = "llama-3.3-70b-versatile"  # Default model for filtering
+    llm_filter_batch_size: int = 10  # Articles per batch for LLM filter
+    llm_filter_max_retries: int = 3  # Max retries on failure
+
+    # Pipeline Settings
+    pipeline_default_days: int = 1  # Default days to fetch for quick run
+
 
 @lru_cache
 def get_settings() -> Settings:

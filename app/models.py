@@ -3,8 +3,8 @@
 import enum
 from datetime import datetime
 
-from sqlalchemy import Boolean, Column, DateTime, Enum, Integer, String, Text, Float
-from sqlalchemy.orm import DeclarativeBase
+from sqlalchemy import Boolean, Column, DateTime, Enum, Integer, String, Text, Float, ForeignKey
+from sqlalchemy.orm import DeclarativeBase, relationship
 
 
 class Base(DeclarativeBase):
@@ -176,3 +176,192 @@ class ReparseJob(Base):
 
     def __repr__(self) -> str:
         return f"<ReparseJob(id={self.id}, source={self.source}, status={self.status})>"
+
+
+# ============================================================================
+# Pipeline Models
+# ============================================================================
+
+
+class PipelineStage(str, enum.Enum):
+    """Pipeline processing stages."""
+
+    FETCH = "fetch"  # 從 DB 取得文章
+    RULE_FILTER = "rule_filter"  # Rule-based 篩選
+    LLM_FILTER = "llm_filter"  # LLM 篩選
+    LLM_ANALYSIS = "llm_analysis"  # LLM 分析
+    STORE = "store"  # 儲存結果
+
+
+class FilterDecision(str, enum.Enum):
+    """Filter decision for articles."""
+
+    KEEP = "keep"  # 保留文章
+    FILTER = "filter"  # 過濾掉文章
+    FORCE_INCLUDE = "force_include"  # 強制納入
+
+
+class PipelineRunStatus(str, enum.Enum):
+    """Status of pipeline run."""
+
+    PENDING = "pending"  # 等待執行
+    RUNNING = "running"  # 執行中
+    PAUSED = "paused"  # 暫停
+    COMPLETED = "completed"  # 完成
+    FAILED = "failed"  # 失敗
+
+
+class PipelineRun(Base):
+    """Track pipeline execution batches and statistics."""
+
+    __tablename__ = "pipeline_runs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String(200), nullable=False)
+    status = Column(
+        Enum(PipelineRunStatus), default=PipelineRunStatus.PENDING, nullable=False
+    )
+    current_stage = Column(Enum(PipelineStage), nullable=True)
+
+    # Date range for fetching articles
+    date_from = Column(DateTime, nullable=True)
+    date_to = Column(DateTime, nullable=True)
+
+    # Statistics
+    total_articles = Column(Integer, default=0, nullable=False)
+    rule_filtered_count = Column(Integer, default=0, nullable=False)
+    rule_passed_count = Column(Integer, default=0, nullable=False)
+    llm_filtered_count = Column(Integer, default=0, nullable=False)
+    llm_passed_count = Column(Integer, default=0, nullable=False)
+    analyzed_count = Column(Integer, default=0, nullable=False)
+    force_included_count = Column(Integer, default=0, nullable=False)
+
+    # LLM provider used
+    llm_provider = Column(String(50), nullable=True)
+
+    # Timestamps
+    started_at = Column(DateTime, nullable=True)
+    completed_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = Column(
+        DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+
+    # Error log
+    error_log = Column(Text, nullable=True)
+
+    # Relationships
+    filter_results = relationship(
+        "ArticleFilterResult", back_populates="pipeline_run", cascade="all, delete-orphan"
+    )
+    analysis_results = relationship(
+        "ArticleAnalysisResult", back_populates="pipeline_run", cascade="all, delete-orphan"
+    )
+
+    def __repr__(self) -> str:
+        return f"<PipelineRun(id={self.id}, name={self.name}, status={self.status})>"
+
+
+class ArticleFilterResult(Base):
+    """Filter decision for each article at each stage."""
+
+    __tablename__ = "article_filter_results"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    pipeline_run_id = Column(Integer, ForeignKey("pipeline_runs.id"), nullable=False, index=True)
+    article_id = Column(Integer, ForeignKey("news_articles.id"), nullable=False, index=True)
+
+    # Stage and decision
+    stage = Column(Enum(PipelineStage), nullable=False, index=True)
+    decision = Column(Enum(FilterDecision), nullable=False, index=True)
+    confidence = Column(Float, nullable=True)  # 0.0-1.0 for LLM decisions
+
+    # Rule/LLM details
+    rule_name = Column(String(100), nullable=True)  # For rule-based filter
+    reason = Column(Text, nullable=True)  # Reason for decision
+
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+    # Relationships
+    pipeline_run = relationship("PipelineRun", back_populates="filter_results")
+
+    def __repr__(self) -> str:
+        return f"<ArticleFilterResult(article_id={self.article_id}, stage={self.stage}, decision={self.decision})>"
+
+
+class ForceIncludeArticle(Base):
+    """Articles that should always be included regardless of filter results."""
+
+    __tablename__ = "force_include_articles"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    article_id = Column(Integer, ForeignKey("news_articles.id"), nullable=False, unique=True, index=True)
+    reason = Column(Text, nullable=False)
+    added_by = Column(String(100), nullable=True)  # User who added
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+    def __repr__(self) -> str:
+        return f"<ForceIncludeArticle(article_id={self.article_id})>"
+
+
+class FilterRuleType(str, enum.Enum):
+    """Type of filter rule."""
+
+    KEYWORD = "keyword"  # Exact keyword match
+    PATTERN = "pattern"  # Regex pattern match
+    CATEGORY = "category"  # Category-based filter
+
+
+class FilterRule(Base):
+    """Configurable rule-based filter rules."""
+
+    __tablename__ = "filter_rules"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String(100), unique=True, nullable=False, index=True)
+    description = Column(Text, nullable=True)
+    rule_type = Column(Enum(FilterRuleType), nullable=False)
+    is_active = Column(Boolean, default=True, nullable=False)
+
+    # Rule configuration (JSON)
+    # For KEYWORD: {"keywords": ["星座", "運勢"], "match_fields": ["title", "tags"]}
+    # For PATTERN: {"pattern": "\\d{4}-\\d{2}-\\d{2}.*開獎", "match_fields": ["title"]}
+    # For CATEGORY: {"categories": ["星座"], "sub_categories": ["運勢"]}
+    config = Column(Text, nullable=False)  # JSON string
+
+    # Statistics
+    total_filtered_count = Column(Integer, default=0, nullable=False)
+
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = Column(
+        DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+
+    def __repr__(self) -> str:
+        return f"<FilterRule(name={self.name}, type={self.rule_type}, active={self.is_active})>"
+
+
+class ArticleAnalysisResult(Base):
+    """LLM analysis results for articles (framework only)."""
+
+    __tablename__ = "article_analysis_results"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    pipeline_run_id = Column(Integer, ForeignKey("pipeline_runs.id"), nullable=False, index=True)
+    article_id = Column(Integer, ForeignKey("news_articles.id"), nullable=False, index=True)
+
+    # Analysis result (JSON)
+    analysis_result = Column(Text, nullable=True)  # JSON string for flexible schema
+
+    # LLM metadata
+    llm_provider = Column(String(50), nullable=True)
+    llm_model = Column(String(100), nullable=True)
+    tokens_used = Column(Integer, nullable=True)
+
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+    # Relationships
+    pipeline_run = relationship("PipelineRun", back_populates="analysis_results")
+
+    def __repr__(self) -> str:
+        return f"<ArticleAnalysisResult(article_id={self.article_id}, pipeline_run_id={self.pipeline_run_id})>"

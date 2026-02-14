@@ -1,15 +1,24 @@
-# 新聞爬蟲管理平台
+# News Analyze
 
-一個基於 Web 的新聞爬蟲管理平台，提供即時監控與動態排程功能。
+新聞爬蟲管理與分析平台，提供 Web 儀表板即時監控爬蟲排程，以及多階段 Pipeline 篩選新聞文章。
 
 ## 功能特色
 
+### 爬蟲管理 (Web Dashboard)
 - **爬蟲管理**：註冊、啟用/停用、設定爬蟲參數
 - **動態排程**：基於 APScheduler 的任務管理，支援執行期間動態調整
 - **即時儀表板**：採用 HTMX 技術的使用者介面，自動更新狀態
 - **文章去重**：爬取前進行 URL 去重，避免重複抓取
 - **爬蟲隔離**：各爬蟲獨立執行，防止連鎖失敗
 - **資料管理**：支援 Raw HTML 封存、還原與重新解析
+
+### 新聞篩選 Pipeline (CLI)
+- **規則篩選**：基於關鍵字、分類等規則快速過濾低價值文章
+- **LLM 篩選**：透過大型語言模型進行語意層級的文章篩選
+- **多 LLM 支援**：Groq、Anthropic (Claude)、OpenAI、Google Gemini
+- **Pipeline 管理**：建立、執行、暫停、重置 Pipeline 運行
+- **強制納入**：手動指定特定文章強制通過篩選
+- **統計報表**：查看篩選效率與歷史執行紀錄
 
 ## 已支援的新聞來源
 
@@ -25,36 +34,56 @@
 
 ## 技術架構
 
-- **後端框架**：FastAPI（非同步）
+- **後端框架**：FastAPI (async)
 - **資料庫**：SQLite + SQLAlchemy
 - **排程器**：APScheduler
 - **前端**：Jinja2 + TailwindCSS (CDN) + HTMX
+- **CLI**：Typer + Rich
+- **LLM 整合**：Groq / Anthropic / OpenAI / Google Generative AI
+- **套件管理**：Poetry
 
 ## 專案結構
 
 ```
 news-analyze/
 ├── app/
-│   ├── main.py              # FastAPI 應用程式入口
-│   ├── config.py            # 設定檔
-│   ├── database.py          # 資料庫連線設定
-│   ├── models.py            # SQLAlchemy ORM 模型
-│   ├── schemas.py           # Pydantic 資料結構
-│   ├── scheduler.py         # APScheduler 排程管理
-│   ├── services/            # 業務邏輯層
+│   ├── main.py                  # FastAPI 應用程式入口
+│   ├── config.py                # Pydantic Settings 設定檔
+│   ├── database.py              # 資料庫連線設定
+│   ├── models.py                # SQLAlchemy ORM 模型
+│   ├── schemas.py               # Pydantic 資料結構
+│   ├── scheduler.py             # APScheduler 排程管理
+│   ├── services/                # 業務邏輯層
 │   │   ├── crawler_service.py
 │   │   ├── pending_url_service.py
 │   │   ├── data_management_service.py
 │   │   ├── deduplication_service.py
 │   │   ├── reparse_service.py
-│   │   └── archive_scheduler.py
-│   └── templates/           # Jinja2 HTML 模板
+│   │   ├── archive_scheduler.py
+│   │   └── pipeline/            # 新聞篩選 Pipeline
+│   │       ├── pipeline_orchestrator.py  # Pipeline 編排器
+│   │       ├── article_fetcher.py        # 文章擷取
+│   │       ├── rule_filter_service.py    # 規則篩選
+│   │       ├── llm_filter_service.py     # LLM 篩選
+│   │       ├── llm_analysis_service.py   # LLM 分析
+│   │       ├── result_store_service.py   # 結果儲存
+│   │       ├── statistics_service.py     # 統計服務
+│   │       └── llm_providers/            # LLM 提供者
+│   │           ├── base.py               # 抽象基底類別
+│   │           ├── groq_provider.py
+│   │           ├── anthropic_provider.py
+│   │           ├── openai_provider.py
+│   │           └── google_provider.py
+│   └── templates/               # Jinja2 HTML 模板
 ├── crawlers/
-│   ├── base.py              # 爬蟲抽象基底類別
-│   ├── registry.py          # 爬蟲註冊機制
-│   └── *_crawler.py         # 各新聞來源爬蟲實作
-├── tests/                   # 測試檔案
-├── pyproject.toml           # Poetry 專案設定
+│   ├── base.py                  # 爬蟲抽象基底類別
+│   ├── registry.py              # 爬蟲註冊機制
+│   └── *_crawler.py             # 各新聞來源爬蟲實作
+├── cli/
+│   ├── __main__.py              # CLI 進入點
+│   └── pipeline.py              # Pipeline CLI 指令
+├── tests/
+├── pyproject.toml               # Poetry 專案設定
 └── README.md
 ```
 
@@ -65,24 +94,90 @@ news-analyze/
 - Python 3.11+
 - Poetry
 
-### 安裝步驟
+### 安裝
 
 ```bash
-# 複製專案
 git clone <repository-url>
 cd news-analyze
 
-# 安裝依賴套件
 poetry install
-
-# 啟動應用程式
-poetry run uvicorn app.main:app --reload
-
-# 開啟瀏覽器
-open http://localhost:8000
 ```
 
-### API 端點
+### 環境變數
+
+複製 `.env.example` 建立 `.env` 檔案，填入需要的 API Key：
+
+```bash
+cp .env.example .env
+```
+
+```env
+# LLM API Keys (依需求填入)
+GROQ_API_KEY=
+ANTHROPIC_API_KEY=
+OPENAI_API_KEY=
+GOOGLE_API_KEY=
+```
+
+### 啟動 Web 儀表板
+
+```bash
+poetry run uvicorn app.main:app --reload
+```
+
+開啟瀏覽器前往 http://localhost:8000
+
+### Pipeline CLI 使用
+
+```bash
+# 快速執行：篩選最近 1 天的文章（規則篩選）
+poetry run python -m cli quick
+
+# 指定天數
+poetry run python -m cli quick --days 3
+
+# 指定小時
+poetry run python -m cli quick --hours 2
+
+# 處理昨天的文章
+poetry run python -m cli quick --yesterday
+
+# 處理特定日期
+poetry run python -m cli quick --date 2025-01-20
+
+# 執行到 LLM 篩選階段
+poetry run python -m cli quick --days 1 --until llm_filter
+
+# 查看 Pipeline 統計
+poetry run python -m cli stats
+
+# 查看特定 Run 的結果
+poetry run python -m cli review <run-id> --show-passed --show-filtered
+
+# 匯出結果為 JSON
+poetry run python -m cli review <run-id> --export results.json
+
+# 查看可用的 LLM 提供者
+poetry run python -m cli providers
+```
+
+## Pipeline 架構
+
+Pipeline 採用多階段篩選流程：
+
+```
+文章資料庫 → [Fetch] → [Rule Filter] → [LLM Filter] → [LLM Analysis] → [Store]
+```
+
+| 階段 | 說明 |
+|------|------|
+| **Fetch** | 依日期範圍從資料庫取出文章 |
+| **Rule Filter** | 基於預設規則（關鍵字、分類）快速過濾 |
+| **LLM Filter** | 透過 LLM 進行語意篩選，判斷文章是否值得分析 |
+| **LLM Analysis** | 對通過篩選的文章進行深度分析（開發中） |
+| **Store** | 儲存最終結果與統計 |
+
+## Web API 端點
 
 | 端點 | 方法 | 說明 |
 |------|------|------|
@@ -95,15 +190,11 @@ open http://localhost:8000
 
 ## 新增爬蟲
 
-### 步驟
-
 1. 在 `crawlers/` 目錄下建立新檔案
 2. 繼承 `BaseListCrawler` 或 `BaseArticleCrawler` 類別
 3. 實作必要的抽象方法
 
 ### 列表爬蟲範例
-
-列表爬蟲負責從 RSS、Sitemap 或索引頁面取得文章 URL 列表。
 
 ```python
 from crawlers.base import BaseListCrawler
@@ -123,13 +214,10 @@ class MyNewsListCrawler(BaseListCrawler):
 
     async def get_article_urls(self) -> list[str]:
         """從 RSS 或網頁取得文章 URL 列表"""
-        # 實作取得 URL 列表的邏輯
         ...
 ```
 
 ### 文章爬蟲範例
-
-文章爬蟲負責抓取並解析文章內容。
 
 ```python
 from crawlers.base import BaseArticleCrawler, ArticleData
@@ -148,53 +236,15 @@ class MyNewsArticleCrawler(BaseArticleCrawler):
         return "My News"
 
     def parse_html(self, raw_html: str, url: str) -> ArticleData:
-        """從 HTML 解析文章內容（用於重新解析）"""
-        # 實作 HTML 解析邏輯
+        """從 HTML 解析文章內容"""
         ...
 
     async def fetch_article(self, url: str) -> ArticleData:
         """抓取並解析單篇文章"""
-        # 實作抓取與解析邏輯
         ...
 ```
 
-### ArticleData 資料結構
-
-```python
-@dataclass
-class ArticleData:
-    url: str                          # 文章網址（必填）
-    title: str                        # 標題（必填）
-    content: str                      # 內文（必填）
-    summary: str | None = None        # 摘要
-    author: str | None = None         # 作者
-    category: str | None = None       # 分類
-    sub_category: str | None = None   # 子分類
-    tags: list[str] | None = None     # 標籤
-    published_at: datetime | None = None  # 發布時間
-    raw_html: str | None = None       # 原始 HTML
-    images: list[str] | None = None   # 圖片網址列表
-```
-
-## 資料管理
-
-### 統計功能
-
-查看各新聞來源的文章數量與儲存空間使用情況。
-
-### 封存功能
-
-將舊文章的 Raw HTML 封存至檔案系統，減少資料庫空間佔用。
-
-- 支援依日期篩選（指定天數前或全部）
-- 支援單一來源或所有來源批次封存
-- 封存後可還原
-
-### 重新解析
-
-使用最新的解析邏輯重新解析已封存的文章，更新文章內容。
-
-## 開發指南
+## 開發
 
 ### 執行測試
 
@@ -202,14 +252,12 @@ class ArticleData:
 poetry run pytest
 ```
 
-### 程式碼規範
+### 設計原則
 
-本專案遵循以下原則：
-
-- **SOLID 原則**：爬蟲採用抽象基底類別設計，遵循開放封閉原則
+- **SOLID 原則**：爬蟲與 LLM Provider 採用抽象基底類別設計
 - **DRY 原則**：共用邏輯抽取至 Service 層
 - **分層架構**：明確區分 Model、Service、Router 各層職責
 
-## 授權
+## License
 
-MIT License
+MIT
