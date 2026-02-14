@@ -48,8 +48,14 @@ coverage.xml
 # macOS
 .DS_Store
 
+# Environment variables
+.env
+.env.*
+!.env.example
+
 # Project specific
 .claude/
 .qodo/
 *.db
+!crawler_admin_test.db
 data/
