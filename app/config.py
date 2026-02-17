@@ -47,6 +47,10 @@ class Settings(BaseSettings):
     llm_batch_size: int = 10  # Articles per batch for LLM processing
     llm_max_retries: int = 3  # Max retries on failure
 
+    # LLM Analysis Settings
+    llm_analysis_poll_interval: int = 30  # Seconds between batch status checks
+    llm_analysis_max_wait: int = 7200  # Max seconds to wait for batch (2 hours)
+
     # Pipeline Settings
     pipeline_default_days: int = 1  # Default days to fetch for quick run
 

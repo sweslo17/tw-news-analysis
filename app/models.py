@@ -233,6 +233,9 @@ class PipelineRun(Base):
     analyzed_count = Column(Integer, default=0, nullable=False)
     force_included_count = Column(Integer, default=0, nullable=False)
 
+    # Batch processing
+    batch_id = Column(String(200), nullable=True)  # OpenAI batch ID for resume
+
     # Timestamps
     started_at = Column(DateTime, nullable=True)
     completed_at = Column(DateTime, nullable=True)
@@ -306,6 +309,14 @@ class FilterRuleType(str, enum.Enum):
     CATEGORY = "category"  # Category-based filter
 
 
+class AnalysisStatus(str, enum.Enum):
+    """Status of article analysis."""
+
+    PENDING = "pending"
+    SUCCESS = "success"
+    FAILED = "failed"
+
+
 class FilterRule(Base):
     """Configurable rule-based filter rules."""
 
@@ -359,3 +370,27 @@ class ArticleAnalysisResult(Base):
 
     def __repr__(self) -> str:
         return f"<ArticleAnalysisResult(article_id={self.article_id}, pipeline_run_id={self.pipeline_run_id})>"
+
+
+class ArticleAnalysisTracking(Base):
+    """Track which articles have been analyzed by LLM."""
+
+    __tablename__ = "article_analysis_tracking"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    article_id = Column(
+        Integer, ForeignKey("news_articles.id"), nullable=False, index=True
+    )
+    batch_id = Column(String(200), nullable=False, index=True)
+    status = Column(
+        Enum(AnalysisStatus), default=AnalysisStatus.PENDING, nullable=False, index=True
+    )
+    error_message = Column(Text, nullable=True)
+
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = Column(
+        DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+
+    def __repr__(self) -> str:
+        return f"<ArticleAnalysisTracking(article_id={self.article_id}, status={self.status})>"
