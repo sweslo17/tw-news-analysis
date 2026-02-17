@@ -4,6 +4,7 @@ import asyncio
 from datetime import datetime, timedelta
 from typing import Callable
 
+from loguru import logger
 from sqlalchemy.orm import Session
 
 from app.config import settings
@@ -56,11 +57,9 @@ class PipelineOrchestrator:
             self._stats = StatisticsService(self.db)
         return self._stats
 
-    def get_analysis_service(
-        self, provider_name: str | None = None, model: str | None = None
-    ) -> LLMAnalysisService:
-        """Get LLM analysis service with specified provider."""
-        return LLMAnalysisService(self.db, provider_name, model)
+    def get_analysis_service(self) -> LLMAnalysisService:
+        """Get LLM analysis service."""
+        return LLMAnalysisService(self.db)
 
     def create_pipeline_run(
         self,
@@ -179,12 +178,26 @@ class PipelineOrchestrator:
                 self.store.update_pipeline_run_status(run, PipelineRunStatus.PAUSED)
                 return run
 
-            # Stage 3: LLM_ANALYSIS (framework only)
-            if until_stage == PipelineStage.LLM_ANALYSIS:
+            # Stage 3: LLM_ANALYSIS
+            if all_passed_articles:
                 self.store.update_pipeline_run_status(
                     run, PipelineRunStatus.RUNNING, PipelineStage.LLM_ANALYSIS
                 )
-                # Analysis is a placeholder for now
+
+                analysis_service = self.get_analysis_service()
+
+                try:
+                    success_count, fail_count = await analysis_service.analyze_articles(
+                        all_passed_articles, run, progress_callback=progress_callback
+                    )
+                    run.analyzed_count = success_count
+                    self.db.commit()
+                except TimeoutError:
+                    logger.warning(f"Batch polling timed out for run {run.id}, pausing")
+                    self.store.update_pipeline_run_status(run, PipelineRunStatus.PAUSED)
+                    return run
+
+            if until_stage == PipelineStage.LLM_ANALYSIS:
                 self.store.update_pipeline_run_status(run, PipelineRunStatus.PAUSED)
                 return run
 
