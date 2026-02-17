@@ -16,7 +16,6 @@ from app.models import (
 )
 from .article_fetcher import ArticleFetcher
 from .rule_filter_service import RuleFilterService
-from .llm_filter_service import LLMFilterService
 from .llm_analysis_service import LLMAnalysisService
 from .result_store_service import ResultStoreService
 from .statistics_service import StatisticsService
@@ -29,7 +28,6 @@ class PipelineOrchestrator:
         self.db = db
         self._fetcher: ArticleFetcher | None = None
         self._rule_filter: RuleFilterService | None = None
-        self._llm_filter: LLMFilterService | None = None
         self._analysis: LLMAnalysisService | None = None
         self._store: ResultStoreService | None = None
         self._stats: StatisticsService | None = None
@@ -57,12 +55,6 @@ class PipelineOrchestrator:
         if self._stats is None:
             self._stats = StatisticsService(self.db)
         return self._stats
-
-    def get_llm_filter(
-        self, provider_name: str | None = None, model: str | None = None
-    ) -> LLMFilterService:
-        """Get LLM filter service with specified provider."""
-        return LLMFilterService(self.db, provider_name, model)
 
     def get_analysis_service(
         self, provider_name: str | None = None, model: str | None = None
@@ -122,8 +114,6 @@ class PipelineOrchestrator:
         self,
         run_id: int,
         until_stage: PipelineStage | None = None,
-        llm_provider: str | None = None,
-        llm_model: str | None = None,
         progress_callback: Callable[[str, int, int], None] | None = None,
     ) -> PipelineRun:
         """
@@ -132,8 +122,6 @@ class PipelineOrchestrator:
         Args:
             run_id: Pipeline run ID
             until_stage: Stop after this stage (default: run all stages)
-            llm_provider: LLM provider for filtering
-            llm_model: LLM model for filtering
             progress_callback: Optional callback for progress updates
                 (stage_name, current, total)
 
@@ -191,44 +179,7 @@ class PipelineOrchestrator:
                 self.store.update_pipeline_run_status(run, PipelineRunStatus.PAUSED)
                 return run
 
-            # Stage 3: LLM_FILTER
-            if all_passed_articles:
-                self.store.update_pipeline_run_status(
-                    run, PipelineRunStatus.RUNNING, PipelineStage.LLM_FILTER
-                )
-
-                llm_filter = self.get_llm_filter(llm_provider, llm_model)
-                run.llm_provider = llm_filter.provider_name
-
-                processed = 0
-                llm_passed_articles = []
-
-                # Process in smaller batches for LLM
-                batch_size = settings.llm_filter_batch_size
-                for i in range(0, len(all_passed_articles), batch_size):
-                    batch = all_passed_articles[i : i + batch_size]
-                    passed, filter_results = await llm_filter.filter_articles_batch(
-                        batch, run.id
-                    )
-                    self.store.save_filter_results(filter_results)
-                    llm_passed_articles.extend(passed)
-
-                    processed += len(batch)
-                    if progress_callback:
-                        progress_callback(
-                            "llm_filter", processed, len(all_passed_articles)
-                        )
-
-                all_passed_articles = llm_passed_articles
-
-            # Update stats after LLM filter
-            self.store.update_pipeline_run_stats(run)
-
-            if until_stage == PipelineStage.LLM_FILTER:
-                self.store.update_pipeline_run_status(run, PipelineRunStatus.PAUSED)
-                return run
-
-            # Stage 4: LLM_ANALYSIS (framework only)
+            # Stage 3: LLM_ANALYSIS (framework only)
             if until_stage == PipelineStage.LLM_ANALYSIS:
                 self.store.update_pipeline_run_status(
                     run, PipelineRunStatus.RUNNING, PipelineStage.LLM_ANALYSIS
@@ -322,7 +273,6 @@ class PipelineOrchestrator:
         stages_to_delete = []
         stage_order = [
             PipelineStage.RULE_FILTER,
-            PipelineStage.LLM_FILTER,
             PipelineStage.LLM_ANALYSIS,
             PipelineStage.STORE,
         ]
@@ -344,9 +294,6 @@ class PipelineOrchestrator:
         if PipelineStage.RULE_FILTER in stages_to_delete:
             run.rule_filtered_count = 0
             run.rule_passed_count = 0
-        if PipelineStage.LLM_FILTER in stages_to_delete:
-            run.llm_filtered_count = 0
-            run.llm_passed_count = 0
         if PipelineStage.LLM_ANALYSIS in stages_to_delete:
             run.analyzed_count = 0
 

@@ -188,7 +188,6 @@ class PipelineStage(str, enum.Enum):
 
     FETCH = "fetch"  # 從 DB 取得文章
     RULE_FILTER = "rule_filter"  # Rule-based 篩選
-    LLM_FILTER = "llm_filter"  # LLM 篩選
     LLM_ANALYSIS = "llm_analysis"  # LLM 分析
     STORE = "store"  # 儲存結果
 
@@ -231,13 +230,8 @@ class PipelineRun(Base):
     total_articles = Column(Integer, default=0, nullable=False)
     rule_filtered_count = Column(Integer, default=0, nullable=False)
     rule_passed_count = Column(Integer, default=0, nullable=False)
-    llm_filtered_count = Column(Integer, default=0, nullable=False)
-    llm_passed_count = Column(Integer, default=0, nullable=False)
     analyzed_count = Column(Integer, default=0, nullable=False)
     force_included_count = Column(Integer, default=0, nullable=False)
-
-    # LLM provider used
-    llm_provider = Column(String(50), nullable=True)
 
     # Timestamps
     started_at = Column(DateTime, nullable=True)

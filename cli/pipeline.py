@@ -16,7 +16,6 @@ from sqlalchemy.orm import sessionmaker
 from app.config import settings
 from app.models import PipelineStage, Base
 from app.services.pipeline import PipelineOrchestrator, StatisticsService
-from app.services.pipeline.llm_filter_service import LLMFilterService
 
 app = typer.Typer(help="News article filtering pipeline commands")
 console = Console()
@@ -35,7 +34,6 @@ def parse_stage(stage: str) -> PipelineStage:
     stage_map = {
         "fetch": PipelineStage.FETCH,
         "rule_filter": PipelineStage.RULE_FILTER,
-        "llm_filter": PipelineStage.LLM_FILTER,
         "llm_analysis": PipelineStage.LLM_ANALYSIS,
         "store": PipelineStage.STORE,
     }
@@ -210,12 +208,6 @@ def create(
 def run(
     run_id: int = typer.Argument(..., help="Pipeline run ID"),
     until: str = typer.Option("store", "--until", "-u", help="Run until this stage"),
-    llm_provider: Optional[str] = typer.Option(
-        None, "--llm-provider", "-p", help="LLM provider (groq/anthropic/openai/google)"
-    ),
-    llm_model: Optional[str] = typer.Option(
-        None, "--llm-model", "-m", help="LLM model name"
-    ),
 ):
     """Run pipeline to specified stage."""
     db = get_db()
@@ -247,8 +239,6 @@ def run(
             orchestrator.run_pipeline(
                 run_id,
                 until_stage=until_stage,
-                llm_provider=llm_provider,
-                llm_model=llm_model,
                 progress_callback=update_progress,
             )
         )
@@ -370,10 +360,8 @@ def stats(
         table.add_row("Completed Runs", str(overall.completed_runs))
         table.add_row("Total Articles Processed", f"{overall.total_articles_processed:,}")
         table.add_row("Total Rule Filtered", f"{overall.total_rule_filtered:,}")
-        table.add_row("Total LLM Filtered", f"{overall.total_llm_filtered:,}")
         table.add_row("Total Analyzed", f"{overall.total_analyzed:,}")
         table.add_row("Avg Rule Filter Rate", f"{overall.avg_rule_filter_rate}%")
-        table.add_row("Avg LLM Filter Rate", f"{overall.avg_llm_filter_rate}%")
 
         console.print(table)
 
@@ -403,7 +391,7 @@ def stats(
                     r["name"][:30],
                     f"[{status_color}]{r['status']}[/{status_color}]",
                     str(r["total_articles"]),
-                    str(r["rule_filtered"] + r["llm_filtered"]),
+                    str(r["rule_filtered"]),
                     r["created_at"][:16],
                 )
             console.print(runs_table)
@@ -519,14 +507,12 @@ def reset(
 @app.command()
 def providers():
     """List available LLM providers."""
-    providers = LLMFilterService.get_available_providers()
+    from app.services.pipeline.llm_filter_service import PROVIDERS
 
     console.print("[bold]Available LLM Providers:[/bold]")
-    for p in providers:
+    for p in PROVIDERS:
         default = " (default)" if p == settings.default_llm_provider else ""
         console.print(f"  • {p}{default}")
-
-    console.print(f"\nDefault model: {settings.llm_filter_model}")
 
 
 def _display_run_stats(stats):
@@ -542,10 +528,7 @@ def _display_run_stats(stats):
     table.add_row("Total Articles", f"{stats.total_articles:,}")
     table.add_row("Rule Filtered", f"{stats.rule_filtered_count:,} ({stats.rule_filter_rate}%)")
     table.add_row("Rule Passed", f"{stats.rule_passed_count:,}")
-    table.add_row("LLM Filtered", f"{stats.llm_filtered_count:,} ({stats.llm_filter_rate}%)")
-    table.add_row("LLM Passed", f"{stats.llm_passed_count:,}")
     table.add_row("Force Included", f"{stats.force_included_count:,}")
-    table.add_row("Overall Filter Rate", f"{stats.overall_filter_rate}%")
 
     if stats.duration_seconds:
         table.add_row("Duration", f"{stats.duration_seconds}s")

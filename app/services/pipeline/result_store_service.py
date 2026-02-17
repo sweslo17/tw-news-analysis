@@ -81,29 +81,6 @@ class ResultStoreService:
             elif decision in (FilterDecision.KEEP, FilterDecision.FORCE_INCLUDE):
                 pipeline_run.rule_passed_count = count
 
-        # Count LLM filter results
-        llm_stats = (
-            self.db.query(
-                ArticleFilterResult.decision, func.count(ArticleFilterResult.id)
-            )
-            .filter(
-                ArticleFilterResult.pipeline_run_id == pipeline_run.id,
-                ArticleFilterResult.stage == PipelineStage.LLM_FILTER,
-            )
-            .group_by(ArticleFilterResult.decision)
-            .all()
-        )
-
-        # Reset LLM counts before recalculating
-        pipeline_run.llm_filtered_count = 0
-        pipeline_run.llm_passed_count = 0
-
-        for decision, count in llm_stats:
-            if decision == FilterDecision.FILTER:
-                pipeline_run.llm_filtered_count = count
-            elif decision in (FilterDecision.KEEP, FilterDecision.FORCE_INCLUDE):
-                pipeline_run.llm_passed_count = count
-
         # Count force-included articles
         force_include_count = (
             self.db.query(func.count(ArticleFilterResult.id))

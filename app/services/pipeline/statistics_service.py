@@ -27,13 +27,9 @@ class PipelineRunStats:
     total_articles: int
     rule_filtered_count: int
     rule_passed_count: int
-    llm_filtered_count: int
-    llm_passed_count: int
     analyzed_count: int
     force_included_count: int
     rule_filter_rate: float  # Percentage filtered by rules
-    llm_filter_rate: float  # Percentage filtered by LLM (of rule-passed)
-    overall_filter_rate: float  # Total percentage filtered
     started_at: datetime | None
     completed_at: datetime | None
     duration_seconds: float | None
@@ -58,10 +54,8 @@ class OverallStats:
     completed_runs: int
     total_articles_processed: int
     total_rule_filtered: int
-    total_llm_filtered: int
     total_analyzed: int
     avg_rule_filter_rate: float
-    avg_llm_filter_rate: float
 
 
 class StatisticsService:
@@ -89,15 +83,6 @@ class StatisticsService:
         if run.total_articles > 0:
             rule_filter_rate = (run.rule_filtered_count / run.total_articles) * 100
 
-        llm_filter_rate = 0.0
-        if run.rule_passed_count > 0:
-            llm_filter_rate = (run.llm_filtered_count / run.rule_passed_count) * 100
-
-        overall_filter_rate = 0.0
-        if run.total_articles > 0:
-            total_filtered = run.rule_filtered_count + run.llm_filtered_count
-            overall_filter_rate = (total_filtered / run.total_articles) * 100
-
         # Calculate duration
         duration = None
         if run.started_at and run.completed_at:
@@ -110,13 +95,9 @@ class StatisticsService:
             total_articles=run.total_articles,
             rule_filtered_count=run.rule_filtered_count,
             rule_passed_count=run.rule_passed_count,
-            llm_filtered_count=run.llm_filtered_count,
-            llm_passed_count=run.llm_passed_count,
             analyzed_count=run.analyzed_count,
             force_included_count=run.force_included_count,
             rule_filter_rate=round(rule_filter_rate, 2),
-            llm_filter_rate=round(llm_filter_rate, 2),
-            overall_filter_rate=round(overall_filter_rate, 2),
             started_at=run.started_at,
             completed_at=run.completed_at,
             duration_seconds=round(duration, 2) if duration else None,
@@ -163,35 +144,26 @@ class StatisticsService:
         stats = self.db.query(
             func.sum(PipelineRun.total_articles),
             func.sum(PipelineRun.rule_filtered_count),
-            func.sum(PipelineRun.llm_filtered_count),
             func.sum(PipelineRun.analyzed_count),
         ).first()
 
         total_articles = stats[0] or 0
         total_rule_filtered = stats[1] or 0
-        total_llm_filtered = stats[2] or 0
-        total_analyzed = stats[3] or 0
+        total_analyzed = stats[2] or 0
 
         # Calculate average rates
         avg_rule_filter_rate = 0.0
-        avg_llm_filter_rate = 0.0
 
         if total_articles > 0:
             avg_rule_filter_rate = (total_rule_filtered / total_articles) * 100
-
-        rule_passed = total_articles - total_rule_filtered
-        if rule_passed > 0:
-            avg_llm_filter_rate = (total_llm_filtered / rule_passed) * 100
 
         return OverallStats(
             total_runs=total_runs,
             completed_runs=completed_runs,
             total_articles_processed=total_articles,
             total_rule_filtered=total_rule_filtered,
-            total_llm_filtered=total_llm_filtered,
             total_analyzed=total_analyzed,
             avg_rule_filter_rate=round(avg_rule_filter_rate, 2),
-            avg_llm_filter_rate=round(avg_llm_filter_rate, 2),
         )
 
     def get_filtered_articles(
@@ -327,7 +299,6 @@ class StatisticsService:
                 "current_stage": run.current_stage.value if run.current_stage else None,
                 "total_articles": run.total_articles,
                 "rule_filtered": run.rule_filtered_count,
-                "llm_filtered": run.llm_filtered_count,
                 "created_at": run.created_at.isoformat(),
             }
             for run in runs

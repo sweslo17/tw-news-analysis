@@ -41,11 +41,11 @@ class Settings(BaseSettings):
     openai_api_key: str | None = None
     google_api_key: str | None = None
 
-    # LLM Filter Settings
+    # LLM Settings
     default_llm_provider: str = "groq"  # groq, anthropic, openai, google
-    llm_filter_model: str = "llama-3.3-70b-versatile"  # Default model for filtering
-    llm_filter_batch_size: int = 10  # Articles per batch for LLM filter
-    llm_filter_max_retries: int = 3  # Max retries on failure
+    llm_model: str = "llama-3.3-70b-versatile"  # Default model
+    llm_batch_size: int = 10  # Articles per batch for LLM processing
+    llm_max_retries: int = 3  # Max retries on failure
 
     # Pipeline Settings
     pipeline_default_days: int = 1  # Default days to fetch for quick run

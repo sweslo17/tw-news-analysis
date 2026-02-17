@@ -41,7 +41,7 @@ class LLMFilterService:
     ):
         self.db = db
         self.provider_name = provider_name or settings.default_llm_provider
-        self.model = model or settings.llm_filter_model
+        self.model = model or settings.llm_model
         self._provider: BaseLLMProvider | None = None
         self._force_include_ids: set[int] | None = None
 
@@ -137,7 +137,7 @@ class LLMFilterService:
         Returns:
             Tuple of (passed_articles, filter_results)
         """
-        batch_size = batch_size or settings.llm_filter_batch_size
+        batch_size = batch_size or settings.llm_batch_size
         passed_articles = []
         filter_results = []
 
