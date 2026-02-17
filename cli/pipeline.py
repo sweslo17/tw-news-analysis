@@ -515,6 +515,120 @@ def providers():
         console.print(f"  • {p}{default}")
 
 
+# ── Analysis subcommands ─────────────────────────────────
+
+analysis_app = typer.Typer(help="LLM analysis management commands")
+app.add_typer(analysis_app, name="analysis")
+
+
+@analysis_app.command("status")
+def analysis_status():
+    """Show analysis tracking statistics."""
+    db = get_db()
+    from app.services.pipeline.llm_analysis_service import LLMAnalysisService
+
+    service = LLMAnalysisService(db)
+    stats = service.get_tracking_stats()
+
+    table = Table(show_header=False)
+    table.add_column("Metric", style="bold")
+    table.add_column("Value")
+
+    table.add_row("Total Tracked", f"{stats['total']:,}")
+    table.add_row("[green]Success[/green]", f"{stats['success']:,}")
+    table.add_row("[red]Failed[/red]", f"{stats['failed']:,}")
+    table.add_row("[yellow]Pending[/yellow]", f"{stats['pending']:,}")
+
+    console.print(Panel("[bold]Analysis Tracking Statistics[/bold]"))
+    console.print(table)
+
+
+@analysis_app.command("retry-failed")
+def analysis_retry_failed():
+    """Re-submit all failed articles for analysis."""
+    db = get_db()
+    from app.services.pipeline.llm_analysis_service import LLMAnalysisService
+
+    service = LLMAnalysisService(db)
+    stats = service.get_tracking_stats()
+
+    if stats["failed"] == 0:
+        console.print("[green]No failed articles to retry[/green]")
+        return
+
+    console.print(f"Retrying {stats['failed']} failed articles...")
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+        console=console,
+    ) as progress:
+        task = progress.add_task("Submitting batch...", total=100)
+
+        def update_progress(stage: str, current: int, total: int):
+            if total > 0:
+                pct = (current / total) * 100
+                progress.update(
+                    task,
+                    description=f"[{stage}] {current}/{total}",
+                    completed=pct,
+                )
+
+        batch_id, count = asyncio.run(
+            service.retry_failed(progress_callback=update_progress)
+        )
+
+    console.print(f"[green]Retried {count} articles in batch {batch_id}[/green]")
+
+    # Show updated stats
+    new_stats = service.get_tracking_stats()
+    console.print(
+        f"Success: {new_stats['success']}, "
+        f"Failed: {new_stats['failed']}, "
+        f"Pending: {new_stats['pending']}"
+    )
+
+
+@analysis_app.command("clear")
+def analysis_clear(
+    all_records: bool = typer.Option(
+        False, "--all", help="Clear all tracking records"
+    ),
+    failed: bool = typer.Option(
+        False, "--failed", help="Clear only failed records"
+    ),
+    article_id: Optional[int] = typer.Option(
+        None, "--article-id", "-a", help="Clear records for specific article"
+    ),
+    batch_id: Optional[str] = typer.Option(
+        None, "--batch-id", "-b", help="Clear records for specific batch"
+    ),
+):
+    """Clear analysis tracking records."""
+    options_set = sum([all_records, failed, article_id is not None, batch_id is not None])
+    if options_set == 0:
+        console.print("[red]Specify one of: --all, --failed, --article-id, --batch-id[/red]")
+        raise typer.Exit(1)
+    if options_set > 1:
+        console.print("[red]Specify only one option[/red]")
+        raise typer.Exit(1)
+
+    db = get_db()
+    from app.services.pipeline.llm_analysis_service import LLMAnalysisService
+
+    service = LLMAnalysisService(db)
+    count = service.clear_tracking(
+        all_records=all_records,
+        failed_only=failed,
+        article_id=article_id,
+        batch_id=batch_id,
+    )
+
+    console.print(f"[green]Cleared {count} tracking records[/green]")
+
+
 def _display_run_stats(stats):
     """Display pipeline run statistics."""
     console.print(Panel(f"[bold]Pipeline Run: {stats.name}[/bold]"))
