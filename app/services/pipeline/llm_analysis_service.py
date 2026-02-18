@@ -236,6 +236,10 @@ class LLMAnalysisService:
             responses
         )
 
+        # Store results (placeholder for future DB integration)
+        successful_responses = [r for r in responses if r.success]
+        self.store_results(successful_responses)
+
         logger.info(
             f"Analysis complete: {success_count} success, {fail_count} failed"
         )
@@ -326,6 +330,19 @@ class LLMAnalysisService:
         raise TimeoutError(
             f"Batch {batch_id} did not complete within {max_wait}s"
         )
+
+    # ── Storage hook ────────────────────────────────────────────
+
+    def store_results(self, responses: list[AnalysisResponse]) -> None:
+        """Store successful analysis results.
+
+        Placeholder for future integration with a separate results DB.
+        Override or extend this method when the storage layer is ready.
+        """
+        if responses:
+            logger.info(
+                f"{len(responses)} analysis results ready for storage (not persisted yet)"
+            )
 
     # ── Helpers ───────────────────────────────────────────────
 

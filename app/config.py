@@ -41,13 +41,14 @@ class Settings(BaseSettings):
     openai_api_key: str | None = None
     google_api_key: str | None = None
 
-    # LLM Settings
+    # LLM Settings (for rule-based LLM filter)
     default_llm_provider: str = "groq"  # groq, anthropic, openai, google
-    llm_model: str = "llama-3.3-70b-versatile"  # Default model
+    llm_model: str = "llama-3.3-70b-versatile"  # Default model for LLM filter
     llm_batch_size: int = 10  # Articles per batch for LLM processing
     llm_max_retries: int = 3  # Max retries on failure
 
-    # LLM Analysis Settings
+    # LLM Analysis Settings (OpenAI Batch API)
+    llm_analysis_model: str = "gpt-4o-mini"  # Model for structured analysis
     llm_analysis_poll_interval: int = 30  # Seconds between batch status checks
     llm_analysis_max_wait: int = 7200  # Max seconds to wait for batch (2 hours)
 

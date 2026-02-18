@@ -4,7 +4,7 @@ import json
 from io import BytesIO
 
 from loguru import logger
-from openai import OpenAI
+from openai import AsyncOpenAI
 
 from app.config import settings
 from prompts.system_prompt import SYSTEM_PROMPT, USER_PROMPT_TEMPLATE
@@ -30,16 +30,53 @@ _STATUS_MAP = {
     "cancelled": BatchStatus.CANCELLED,
 }
 
+# Keywords not supported by OpenAI strict mode JSON schema
+_UNSUPPORTED_KEYWORDS = {
+    "minLength", "maxLength", "pattern", "minimum", "maximum",
+    "exclusiveMinimum", "exclusiveMaximum", "minItems", "maxItems",
+    "uniqueItems", "format", "multipleOf", "default", "title",
+}
+
+
+def _make_strict_node(node: dict) -> dict:
+    """Recursively process a JSON schema node for OpenAI strict mode.
+
+    - Strips unsupported keywords (minLength, maxLength, pattern, etc.)
+    - Adds additionalProperties: false to all objects
+    - Makes all properties required
+    """
+    node = {k: v for k, v in node.items() if k not in _UNSUPPORTED_KEYWORDS}
+
+    if "$defs" in node:
+        node["$defs"] = {
+            k: _make_strict_node(v) for k, v in node["$defs"].items()
+        }
+
+    if node.get("type") == "object" and "properties" in node:
+        node["additionalProperties"] = False
+        node["required"] = list(node["properties"].keys())
+        node["properties"] = {
+            k: _make_strict_node(v) for k, v in node["properties"].items()
+        }
+
+    if node.get("type") == "array" and "items" in node:
+        node["items"] = _make_strict_node(node["items"])
+
+    if "anyOf" in node:
+        node["anyOf"] = [_make_strict_node(opt) for opt in node["anyOf"]]
+
+    return node
+
 
 class OpenAIBatchProvider(BaseAnalysisProvider):
     """OpenAI Batch API implementation for structured news analysis."""
 
     def __init__(self, model: str | None = None, api_key: str | None = None):
-        self.model = model or settings.llm_model
+        self.model = model or settings.llm_analysis_model
         self.api_key = api_key or settings.openai_api_key
         if not self.api_key:
             raise ValueError("OpenAI API key not configured")
-        self.client = OpenAI(api_key=self.api_key)
+        self.client = AsyncOpenAI(api_key=self.api_key)
         self._json_schema = self._build_json_schema()
 
     @property
@@ -47,13 +84,20 @@ class OpenAIBatchProvider(BaseAnalysisProvider):
         return "openai_batch"
 
     def _build_json_schema(self) -> dict:
-        """Build the JSON schema for structured output from Pydantic model."""
+        """Build the JSON schema for structured output from Pydantic model.
+
+        Post-processes the Pydantic schema to satisfy OpenAI strict mode:
+        additionalProperties: false on all objects, all properties required,
+        unsupported validation keywords stripped.
+        """
+        raw_schema = NewsAnalysisResult.model_json_schema()
+        strict_schema = _make_strict_node(raw_schema)
         return {
             "type": "json_schema",
             "json_schema": {
                 "name": "news_analysis",
                 "strict": True,
-                "schema": NewsAnalysisResult.model_json_schema(),
+                "schema": strict_schema,
             },
         }
 
@@ -98,14 +142,14 @@ class OpenAIBatchProvider(BaseAnalysisProvider):
         logger.info(f"Uploading batch with {len(requests)} requests")
 
         # Upload file
-        file_obj = self.client.files.create(
+        file_obj = await self.client.files.create(
             file=("batch_input.jsonl", BytesIO(jsonl_content)),
             purpose="batch",
         )
         logger.info(f"Uploaded file: {file_obj.id}")
 
         # Create batch
-        batch = self.client.batches.create(
+        batch = await self.client.batches.create(
             input_file_id=file_obj.id,
             endpoint="/v1/chat/completions",
             completion_window="24h",
@@ -116,7 +160,7 @@ class OpenAIBatchProvider(BaseAnalysisProvider):
 
     async def check_batch_status(self, batch_id: str) -> BatchStatusResult:
         """Check OpenAI batch status."""
-        batch = self.client.batches.retrieve(batch_id)
+        batch = await self.client.batches.retrieve(batch_id)
         status = _STATUS_MAP.get(batch.status, BatchStatus.PENDING)
         counts = batch.request_counts
 
@@ -129,7 +173,7 @@ class OpenAIBatchProvider(BaseAnalysisProvider):
 
     async def retrieve_results(self, batch_id: str) -> list[AnalysisResponse]:
         """Download and parse batch results."""
-        batch = self.client.batches.retrieve(batch_id)
+        batch = await self.client.batches.retrieve(batch_id)
 
         if batch.status != "completed":
             raise RuntimeError(
@@ -140,7 +184,7 @@ class OpenAIBatchProvider(BaseAnalysisProvider):
 
         # Process successful results
         if batch.output_file_id:
-            content = self.client.files.content(batch.output_file_id)
+            content = await self.client.files.content(batch.output_file_id)
             for line in content.text.strip().split("\n"):
                 if not line.strip():
                     continue
@@ -148,7 +192,7 @@ class OpenAIBatchProvider(BaseAnalysisProvider):
 
         # Process error results
         if batch.error_file_id:
-            content = self.client.files.content(batch.error_file_id)
+            content = await self.client.files.content(batch.error_file_id)
             for line in content.text.strip().split("\n"):
                 if not line.strip():
                     continue
