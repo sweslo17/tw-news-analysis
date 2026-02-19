@@ -7,8 +7,8 @@ from loguru import logger
 from openai import AsyncOpenAI
 
 from app.config import settings
-from prompts.system_prompt import SYSTEM_PROMPT, USER_PROMPT_TEMPLATE
-from schemas.llm_output import NewsAnalysisResult
+from .prompts import SYSTEM_PROMPT, USER_PROMPT_TEMPLATE
+from .schemas import NewsAnalysisResult
 from .base_provider import (
     BaseAnalysisProvider,
     AnalysisRequest,

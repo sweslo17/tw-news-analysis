@@ -27,7 +27,6 @@ poetry run python -m cli.pipeline --help
 | `force-include` | 將文章加入強制納入清單 |
 | `list-force-includes` | 列出所有強制納入的文章 |
 | `remove-force-include` | 從強制納入清單移除文章 |
-| `providers` | 列出可用的 LLM providers |
 
 ### analysis 子指令
 
@@ -305,15 +304,6 @@ OPENAI_API_KEY=your-openai-api-key
 
 # TimescaleDB（分析結果儲存，不設定則不寫入）
 TIMESCALE_URL=postgres://user:pass@host:port/dbname?sslmode=require
-
-# 其他 LLM providers（rule filter 用，選填）
-GROQ_API_KEY=your-groq-api-key
-ANTHROPIC_API_KEY=your-anthropic-api-key
-GOOGLE_API_KEY=your-google-api-key
-
-# 預設設定
-DEFAULT_LLM_PROVIDER=groq
-LLM_FILTER_MODEL=llama-3.1-8b-instant
 ```
 
 ---

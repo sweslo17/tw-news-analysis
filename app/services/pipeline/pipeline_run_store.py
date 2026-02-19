@@ -12,7 +12,7 @@ from app.models import (
 )
 
 
-class ResultStoreService:
+class PipelineRunStore:
     """Service for storing pipeline results to database."""
 
     def __init__(self, db: Session):

@@ -91,3 +91,11 @@ class BaseAnalysisProvider(ABC):
         Returns:
             List of AnalysisResponse, one per request.
         """
+
+
+def parse_article_id(custom_id: str) -> int | None:
+    """Extract article_id from custom_id like 'article_123'."""
+    try:
+        return int(custom_id.split("_", 1)[1])
+    except (IndexError, ValueError):
+        return None

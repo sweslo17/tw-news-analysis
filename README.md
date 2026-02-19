@@ -14,8 +14,6 @@
 
 ### 新聞篩選 Pipeline (CLI)
 - **規則篩選**：基於關鍵字、分類等規則快速過濾低價值文章
-- **LLM 篩選**：透過大型語言模型進行語意層級的文章篩選
-- **多 LLM 支援**：Groq、Anthropic (Claude)、OpenAI、Google Gemini
 - **Pipeline 管理**：建立、執行、暫停、重置 Pipeline 運行
 - **強制納入**：手動指定特定文章強制通過篩選
 - **統計報表**：查看篩選效率與歷史執行紀錄
@@ -39,7 +37,7 @@
 - **排程器**：APScheduler
 - **前端**：Jinja2 + TailwindCSS (CDN) + HTMX
 - **CLI**：Typer + Rich
-- **LLM 整合**：Groq / Anthropic / OpenAI / Google Generative AI
+- **LLM 整合**：OpenAI Batch API
 - **套件管理**：Poetry
 
 ## 專案結構
@@ -64,16 +62,9 @@ news-analyze/
 │   │       ├── pipeline_orchestrator.py  # Pipeline 編排器
 │   │       ├── article_fetcher.py        # 文章擷取
 │   │       ├── rule_filter_service.py    # 規則篩選
-│   │       ├── llm_filter_service.py     # LLM 篩選
 │   │       ├── llm_analysis_service.py   # LLM 分析
 │   │       ├── result_store_service.py   # 結果儲存
-│   │       ├── statistics_service.py     # 統計服務
-│   │       └── llm_providers/            # LLM 提供者
-│   │           ├── base.py               # 抽象基底類別
-│   │           ├── groq_provider.py
-│   │           ├── anthropic_provider.py
-│   │           ├── openai_provider.py
-│   │           └── google_provider.py
+│   │       └── statistics_service.py     # 統計服務
 │   └── templates/               # Jinja2 HTML 模板
 ├── crawlers/
 │   ├── base.py                  # 爬蟲抽象基底類別
@@ -112,11 +103,8 @@ cp .env.example .env
 ```
 
 ```env
-# LLM API Keys (依需求填入)
-GROQ_API_KEY=
-ANTHROPIC_API_KEY=
+# OpenAI API Key (LLM 分析必須)
 OPENAI_API_KEY=
-GOOGLE_API_KEY=
 ```
 
 ### 啟動 Web 儀表板
@@ -145,9 +133,6 @@ poetry run python -m cli quick --yesterday
 # 處理特定日期
 poetry run python -m cli quick --date 2025-01-20
 
-# 執行到 LLM 篩選階段
-poetry run python -m cli quick --days 1 --until llm_filter
-
 # 查看 Pipeline 統計
 poetry run python -m cli stats
 
@@ -156,9 +141,6 @@ poetry run python -m cli review <run-id> --show-passed --show-filtered
 
 # 匯出結果為 JSON
 poetry run python -m cli review <run-id> --export results.json
-
-# 查看可用的 LLM 提供者
-poetry run python -m cli providers
 ```
 
 ## Pipeline 架構
@@ -166,15 +148,14 @@ poetry run python -m cli providers
 Pipeline 採用多階段篩選流程：
 
 ```
-文章資料庫 → [Fetch] → [Rule Filter] → [LLM Filter] → [LLM Analysis] → [Store]
+文章資料庫 → [Fetch] → [Rule Filter] → [LLM Analysis] → [Store]
 ```
 
 | 階段 | 說明 |
 |------|------|
 | **Fetch** | 依日期範圍從資料庫取出文章 |
 | **Rule Filter** | 基於預設規則（關鍵字、分類）快速過濾 |
-| **LLM Filter** | 透過 LLM 進行語意篩選，判斷文章是否值得分析 |
-| **LLM Analysis** | 對通過篩選的文章進行深度分析（開發中） |
+| **LLM Analysis** | OpenAI Batch API 結構化分析 |
 | **Store** | 儲存最終結果與統計 |
 
 ## Web API 端點

@@ -18,7 +18,7 @@ from app.models import (
 from .article_fetcher import ArticleFetcher
 from .rule_filter_service import RuleFilterService
 from .llm_analysis_service import LLMAnalysisService
-from .result_store_service import ResultStoreService
+from .pipeline_run_store import PipelineRunStore
 from .statistics_service import StatisticsService
 
 
@@ -29,7 +29,7 @@ class PipelineOrchestrator:
         self.db = db
         self._fetcher: ArticleFetcher | None = None
         self._rule_filter: RuleFilterService | None = None
-        self._store: ResultStoreService | None = None
+        self._store: PipelineRunStore | None = None
         self._stats: StatisticsService | None = None
 
     @property
@@ -45,9 +45,9 @@ class PipelineOrchestrator:
         return self._rule_filter
 
     @property
-    def store(self) -> ResultStoreService:
+    def store(self) -> PipelineRunStore:
         if self._store is None:
-            self._store = ResultStoreService(self.db)
+            self._store = PipelineRunStore(self.db)
         return self._store
 
     @property

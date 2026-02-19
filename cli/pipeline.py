@@ -3,30 +3,45 @@
 import asyncio
 import json
 from datetime import datetime, timedelta
-from typing import Optional
+from typing import Callable, Optional
 
 import typer
 from rich.console import Console
 from rich.table import Table
-from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn
+from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskID
 from rich.panel import Panel
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
 
-from app.config import settings
-from app.models import PipelineStage, Base
+from app.database import get_db_session
+from app.models import PipelineStage
 from app.services.pipeline import PipelineOrchestrator, StatisticsService
 
 app = typer.Typer(help="News article filtering pipeline commands")
 console = Console()
 
 
-def get_db():
-    """Get database session."""
-    engine = create_engine(settings.database_url, echo=False)
-    Base.metadata.create_all(engine)
-    Session = sessionmaker(bind=engine)
-    return Session()
+def _make_progress_callback(
+    progress: Progress, task_id: TaskID
+) -> Callable[[str, int, int], None]:
+    """Create a progress callback for pipeline stages."""
+    def update_progress(stage: str, current: int, total: int) -> None:
+        stage_labels = {
+            "fetch": "Fetching articles...",
+            "rule_filter": "Applying rule filters...",
+            "llm_analysis": "Running LLM analysis...",
+        }
+        if total > 0:
+            pct = (current / total) * 100
+            progress.update(
+                task_id,
+                description=stage_labels.get(stage, f"[{stage}] {current}/{total}"),
+                completed=pct,
+            )
+        else:
+            progress.update(
+                task_id,
+                description=stage_labels.get(stage, f"[{stage}] Processing..."),
+            )
+    return update_progress
 
 
 def parse_stage(stage: str) -> PipelineStage:
@@ -146,8 +161,6 @@ def quick(
     if options_set == 0:
         days = 1
 
-    db = get_db()
-    orchestrator = PipelineOrchestrator(db)
     until_stage = parse_stage(until)
 
     # Calculate date range
@@ -156,39 +169,35 @@ def quick(
     else:
         date_from, date_to, name_suffix = _get_date_range(days, hours, minutes, yesterday, date)
 
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        BarColumn(),
-        TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
-        console=console,
-    ) as progress:
-        task = progress.add_task("Starting pipeline...", total=100)
+    with get_db_session() as db:
+        orchestrator = PipelineOrchestrator(db)
 
-        def update_progress(stage: str, current: int, total: int):
-            if total > 0:
-                pct = (current / total) * 100
-                progress.update(task, description=f"[{stage}] {current}/{total}", completed=pct)
-            else:
-                progress.update(task, description=f"[{stage}] Counting articles...")
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+            console=console,
+        ) as progress:
+            task = progress.add_task("Starting pipeline...", total=100)
 
-        run = asyncio.run(
-            orchestrator.run_quick_pipeline_with_range(
-                date_from=date_from,
-                date_to=date_to,
-                name_suffix=name_suffix,
-                until_stage=until_stage,
-                progress_callback=update_progress,
-                limit=limit,
+            run = asyncio.run(
+                orchestrator.run_quick_pipeline_with_range(
+                    date_from=date_from,
+                    date_to=date_to,
+                    name_suffix=name_suffix,
+                    until_stage=until_stage,
+                    progress_callback=_make_progress_callback(progress, task),
+                    limit=limit,
+                )
             )
-        )
 
-    # Show results
-    stats = orchestrator.stats.get_pipeline_run_stats(run.id)
-    if stats:
-        _display_run_stats(stats)
+        # Show results
+        stats = orchestrator.stats.get_pipeline_run_stats(run.id)
+        if stats:
+            _display_run_stats(stats)
 
-    console.print(f"\n[green]Pipeline run ID: {run.id}[/green]")
+        console.print(f"\n[green]Pipeline run ID: {run.id}[/green]")
 
 
 @app.command()
@@ -202,19 +211,18 @@ def create(
     ),
 ):
     """Create a new pipeline run."""
-    db = get_db()
-    orchestrator = PipelineOrchestrator(db)
-
     # Parse dates
     from_dt = datetime.strptime(date_from, "%Y-%m-%d") if date_from else None
     to_dt = datetime.strptime(date_to, "%Y-%m-%d") if date_to else None
 
-    run = orchestrator.create_pipeline_run(name=name, date_from=from_dt, date_to=to_dt)
+    with get_db_session() as db:
+        orchestrator = PipelineOrchestrator(db)
+        run = orchestrator.create_pipeline_run(name=name, date_from=from_dt, date_to=to_dt)
 
-    console.print(f"[green]Created pipeline run:[/green]")
-    console.print(f"  ID: {run.id}")
-    console.print(f"  Name: {run.name}")
-    console.print(f"  Date range: {from_dt or 'All'} - {to_dt or 'Now'}")
+        console.print(f"[green]Created pipeline run:[/green]")
+        console.print(f"  ID: {run.id}")
+        console.print(f"  Name: {run.name}")
+        console.print(f"  Date range: {from_dt or 'All'} - {to_dt or 'Now'}")
 
 
 @app.command()
@@ -223,43 +231,37 @@ def run(
     until: str = typer.Option("store", "--until", "-u", help="Run until this stage"),
 ):
     """Run pipeline to specified stage."""
-    db = get_db()
-    orchestrator = PipelineOrchestrator(db)
     until_stage = parse_stage(until)
 
-    pipeline_run = orchestrator.get_pipeline_run(run_id)
-    if not pipeline_run:
-        console.print(f"[red]Pipeline run {run_id} not found[/red]")
-        raise typer.Exit(1)
+    with get_db_session() as db:
+        orchestrator = PipelineOrchestrator(db)
 
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        BarColumn(),
-        TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
-        console=console,
-    ) as progress:
-        task = progress.add_task("Starting pipeline...", total=100)
+        pipeline_run = orchestrator.get_pipeline_run(run_id)
+        if not pipeline_run:
+            console.print(f"[red]Pipeline run {run_id} not found[/red]")
+            raise typer.Exit(1)
 
-        def update_progress(stage: str, current: int, total: int):
-            if total > 0:
-                pct = (current / total) * 100
-                progress.update(task, description=f"[{stage}] {current}/{total}", completed=pct)
-            else:
-                progress.update(task, description=f"[{stage}] Processing...")
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+            console=console,
+        ) as progress:
+            task = progress.add_task("Starting pipeline...", total=100)
 
-        run_result = asyncio.run(
-            orchestrator.run_pipeline(
-                run_id,
-                until_stage=until_stage,
-                progress_callback=update_progress,
+            run_result = asyncio.run(
+                orchestrator.run_pipeline(
+                    run_id,
+                    until_stage=until_stage,
+                    progress_callback=_make_progress_callback(progress, task),
+                )
             )
-        )
 
-    # Show results
-    stats = orchestrator.stats.get_pipeline_run_stats(run_result.id)
-    if stats:
-        _display_run_stats(stats)
+        # Show results
+        stats = orchestrator.stats.get_pipeline_run_stats(run_result.id)
+        if stats:
+            _display_run_stats(stats)
 
 
 @app.command()
@@ -277,72 +279,72 @@ def review(
     ),
 ):
     """Review pipeline run results."""
-    db = get_db()
-    stats_service = StatisticsService(db)
+    with get_db_session() as db:
+        stats_service = StatisticsService(db)
 
-    run_stats = stats_service.get_pipeline_run_stats(run_id)
-    if not run_stats:
-        console.print(f"[red]Pipeline run {run_id} not found[/red]")
-        raise typer.Exit(1)
+        run_stats = stats_service.get_pipeline_run_stats(run_id)
+        if not run_stats:
+            console.print(f"[red]Pipeline run {run_id} not found[/red]")
+            raise typer.Exit(1)
 
-    _display_run_stats(run_stats)
+        _display_run_stats(run_stats)
 
-    export_data = {"stats": vars(run_stats)}
+        export_data = {"stats": vars(run_stats)}
 
-    if show_filtered:
-        console.print("\n[bold]Filtered Articles:[/bold]")
-        filtered = stats_service.get_filtered_articles(run_id, limit=limit)
-        export_data["filtered"] = filtered
+        if show_filtered:
+            console.print("\n[bold]Filtered Articles:[/bold]")
+            filtered = stats_service.get_filtered_articles(run_id, limit=limit)
+            export_data["filtered"] = filtered
 
-        if filtered:
-            table = Table(show_header=True, header_style="bold")
-            table.add_column("ID", style="dim")
-            table.add_column("Title", max_width=50)
-            table.add_column("Source")
-            table.add_column("Stage")
-            table.add_column("Rule/Reason")
+            if filtered:
+                table = Table(show_header=True, header_style="bold")
+                table.add_column("ID", style="dim")
+                table.add_column("Title", max_width=50)
+                table.add_column("Source")
+                table.add_column("Stage")
+                table.add_column("Rule/Reason")
 
-            for article in filtered:
-                table.add_row(
-                    str(article["article_id"]),
-                    article["title"][:50],
-                    article["source"],
-                    article["stage"],
-                    article["rule_name"] or article["reason"][:30],
-                )
-            console.print(table)
-        else:
-            console.print("[dim]No filtered articles[/dim]")
+                for article in filtered:
+                    table.add_row(
+                        str(article["article_id"]),
+                        article["title"][:50],
+                        article["source"],
+                        article["stage"],
+                        article["rule_name"] or article["reason"][:30],
+                    )
+                console.print(table)
+            else:
+                console.print("[dim]No filtered articles[/dim]")
 
-    if show_passed:
-        console.print("\n[bold]Passed Articles:[/bold]")
-        passed = stats_service.get_passed_articles(run_id, limit=limit)
-        export_data["passed"] = passed
+        if show_passed:
+            console.print("\n[bold]Passed Articles:[/bold]")
+            passed = stats_service.get_passed_articles(run_id, limit=limit)
+            export_data["passed"] = passed
 
-        if passed:
-            table = Table(show_header=True, header_style="bold")
-            table.add_column("ID", style="dim")
-            table.add_column("Title", max_width=50)
-            table.add_column("Source")
-            table.add_column("Category")
-            table.add_column("Decision")
+            if passed:
+                table = Table(show_header=True, header_style="bold")
+                table.add_column("ID", style="dim")
+                table.add_column("Title", max_width=50)
+                table.add_column("Source")
+                table.add_column("Category")
+                table.add_column("Decision")
 
-            for article in passed:
-                table.add_row(
-                    str(article["article_id"]),
-                    article["title"][:50],
-                    article["source"],
-                    article["category"] or "-",
-                    article["decision"],
-                )
-            console.print(table)
-        else:
-            console.print("[dim]No passed articles[/dim]")
+                for article in passed:
+                    table.add_row(
+                        str(article["article_id"]),
+                        article["title"][:50],
+                        article["source"],
+                        article["category"] or "-",
+                        article["decision"],
+                    )
+                console.print(table)
+            else:
+                console.print("[dim]No passed articles[/dim]")
 
-    if export:
-        with open(export, "w", encoding="utf-8") as f:
-            json.dump(export_data, f, ensure_ascii=False, indent=2, default=str)
-        console.print(f"\n[green]Results exported to {export}[/green]")
+        if export:
+            with open(export, "w", encoding="utf-8") as f:
+                json.dump(export_data, f, ensure_ascii=False, indent=2, default=str)
+            console.print(f"\n[green]Results exported to {export}[/green]")
 
 
 @app.command()
@@ -350,84 +352,84 @@ def stats(
     run_id: Optional[int] = typer.Argument(None, help="Pipeline run ID (optional)"),
 ):
     """Show pipeline statistics."""
-    db = get_db()
-    stats_service = StatisticsService(db)
+    with get_db_session() as db:
+        stats_service = StatisticsService(db)
 
-    if run_id:
-        run_stats = stats_service.get_pipeline_run_stats(run_id)
-        if not run_stats:
-            console.print(f"[red]Pipeline run {run_id} not found[/red]")
-            raise typer.Exit(1)
-        _display_run_stats(run_stats)
-    else:
-        # Show overall stats
-        overall = stats_service.get_overall_stats()
+        if run_id:
+            run_stats = stats_service.get_pipeline_run_stats(run_id)
+            if not run_stats:
+                console.print(f"[red]Pipeline run {run_id} not found[/red]")
+                raise typer.Exit(1)
+            _display_run_stats(run_stats)
+        else:
+            # Show overall stats
+            overall = stats_service.get_overall_stats()
 
-        console.print(Panel("[bold]Overall Pipeline Statistics[/bold]"))
+            console.print(Panel("[bold]Overall Pipeline Statistics[/bold]"))
 
-        table = Table(show_header=False)
-        table.add_column("Metric", style="bold")
-        table.add_column("Value")
+            table = Table(show_header=False)
+            table.add_column("Metric", style="bold")
+            table.add_column("Value")
 
-        table.add_row("Total Runs", str(overall.total_runs))
-        table.add_row("Completed Runs", str(overall.completed_runs))
-        table.add_row("Total Articles Processed", f"{overall.total_articles_processed:,}")
-        table.add_row("Total Rule Filtered", f"{overall.total_rule_filtered:,}")
-        table.add_row("Total Analyzed", f"{overall.total_analyzed:,}")
-        table.add_row("Avg Rule Filter Rate", f"{overall.avg_rule_filter_rate}%")
+            table.add_row("Total Runs", str(overall.total_runs))
+            table.add_row("Completed Runs", str(overall.completed_runs))
+            table.add_row("Total Articles Processed", f"{overall.total_articles_processed:,}")
+            table.add_row("Total Rule Filtered", f"{overall.total_rule_filtered:,}")
+            table.add_row("Total Analyzed", f"{overall.total_analyzed:,}")
+            table.add_row("Avg Rule Filter Rate", f"{overall.avg_rule_filter_rate}%")
 
-        console.print(table)
+            console.print(table)
 
-        # Show recent runs
-        console.print("\n[bold]Recent Runs:[/bold]")
-        recent = stats_service.get_recent_runs(limit=5)
-        if recent:
-            runs_table = Table(show_header=True, header_style="bold")
-            runs_table.add_column("ID", style="dim")
-            runs_table.add_column("Name")
-            runs_table.add_column("Status")
-            runs_table.add_column("Articles")
-            runs_table.add_column("Filtered")
-            runs_table.add_column("Created")
+            # Show recent runs
+            console.print("\n[bold]Recent Runs:[/bold]")
+            recent = stats_service.get_recent_runs(limit=5)
+            if recent:
+                runs_table = Table(show_header=True, header_style="bold")
+                runs_table.add_column("ID", style="dim")
+                runs_table.add_column("Name")
+                runs_table.add_column("Status")
+                runs_table.add_column("Articles")
+                runs_table.add_column("Filtered")
+                runs_table.add_column("Created")
 
-            for r in recent:
-                status_color = {
-                    "completed": "green",
-                    "running": "yellow",
-                    "failed": "red",
-                    "pending": "dim",
-                    "paused": "blue",
-                }.get(r["status"], "white")
+                for r in recent:
+                    status_color = {
+                        "completed": "green",
+                        "running": "yellow",
+                        "failed": "red",
+                        "pending": "dim",
+                        "paused": "blue",
+                    }.get(r["status"], "white")
 
-                runs_table.add_row(
-                    str(r["id"]),
-                    r["name"][:30],
-                    f"[{status_color}]{r['status']}[/{status_color}]",
-                    str(r["total_articles"]),
-                    str(r["rule_filtered"]),
-                    r["created_at"][:16],
-                )
-            console.print(runs_table)
+                    runs_table.add_row(
+                        str(r["id"]),
+                        r["name"][:30],
+                        f"[{status_color}]{r['status']}[/{status_color}]",
+                        str(r["total_articles"]),
+                        str(r["rule_filtered"]),
+                        r["created_at"][:16],
+                    )
+                console.print(runs_table)
 
-        # Show rule stats
-        console.print("\n[bold]Rule Statistics:[/bold]")
-        rules = stats_service.get_rule_stats()
-        if rules:
-            rules_table = Table(show_header=True, header_style="bold")
-            rules_table.add_column("Rule Name")
-            rules_table.add_column("Type")
-            rules_table.add_column("Active")
-            rules_table.add_column("Total Filtered")
+            # Show rule stats
+            console.print("\n[bold]Rule Statistics:[/bold]")
+            rules = stats_service.get_rule_stats()
+            if rules:
+                rules_table = Table(show_header=True, header_style="bold")
+                rules_table.add_column("Rule Name")
+                rules_table.add_column("Type")
+                rules_table.add_column("Active")
+                rules_table.add_column("Total Filtered")
 
-            for rule in rules:
-                active = "[green]Yes[/green]" if rule.is_active else "[red]No[/red]"
-                rules_table.add_row(
-                    rule.rule_name,
-                    rule.rule_type,
-                    active,
-                    f"{rule.total_filtered_count:,}",
-                )
-            console.print(rules_table)
+                for rule in rules:
+                    active = "[green]Yes[/green]" if rule.is_active else "[red]No[/red]"
+                    rules_table.add_row(
+                        rule.rule_name,
+                        rule.rule_type,
+                        active,
+                        f"{rule.total_filtered_count:,}",
+                    )
+                console.print(rules_table)
 
 
 @app.command(name="force-include")
@@ -437,49 +439,49 @@ def force_include(
     user: Optional[str] = typer.Option(None, "--user", "-u", help="User adding this entry"),
 ):
     """Force include an article in future pipeline runs."""
-    db = get_db()
-    orchestrator = PipelineOrchestrator(db)
+    with get_db_session() as db:
+        orchestrator = PipelineOrchestrator(db)
 
-    try:
-        entry = orchestrator.add_force_include(article_id, reason, user)
-        console.print(f"[green]Article {article_id} added to force-include list[/green]")
-        console.print(f"  Reason: {reason}")
-    except ValueError as e:
-        console.print(f"[red]Error: {e}[/red]")
-        raise typer.Exit(1)
+        try:
+            entry = orchestrator.add_force_include(article_id, reason, user)
+            console.print(f"[green]Article {article_id} added to force-include list[/green]")
+            console.print(f"  Reason: {reason}")
+        except ValueError as e:
+            console.print(f"[red]Error: {e}[/red]")
+            raise typer.Exit(1)
 
 
 @app.command(name="list-force-includes")
 def list_force_includes():
     """List all force-included articles."""
-    db = get_db()
-    orchestrator = PipelineOrchestrator(db)
+    with get_db_session() as db:
+        orchestrator = PipelineOrchestrator(db)
 
-    entries = orchestrator.list_force_includes()
+        entries = orchestrator.list_force_includes()
 
-    if not entries:
-        console.print("[dim]No force-included articles[/dim]")
-        return
+        if not entries:
+            console.print("[dim]No force-included articles[/dim]")
+            return
 
-    table = Table(show_header=True, header_style="bold")
-    table.add_column("Article ID", style="dim")
-    table.add_column("Title", max_width=40)
-    table.add_column("Source")
-    table.add_column("Reason")
-    table.add_column("Added By")
-    table.add_column("Created")
+        table = Table(show_header=True, header_style="bold")
+        table.add_column("Article ID", style="dim")
+        table.add_column("Title", max_width=40)
+        table.add_column("Source")
+        table.add_column("Reason")
+        table.add_column("Added By")
+        table.add_column("Created")
 
-    for entry in entries:
-        table.add_row(
-            str(entry["article_id"]),
-            entry["title"][:40],
-            entry["source"],
-            entry["reason"][:30],
-            entry["added_by"] or "-",
-            entry["created_at"][:10],
-        )
+        for entry in entries:
+            table.add_row(
+                str(entry["article_id"]),
+                entry["title"][:40],
+                entry["source"],
+                entry["reason"][:30],
+                entry["added_by"] or "-",
+                entry["created_at"][:10],
+            )
 
-    console.print(table)
+        console.print(table)
 
 
 @app.command(name="remove-force-include")
@@ -487,13 +489,13 @@ def remove_force_include(
     article_id: int = typer.Option(..., "--article-id", "-a", help="Article ID to remove"),
 ):
     """Remove an article from force-include list."""
-    db = get_db()
-    orchestrator = PipelineOrchestrator(db)
+    with get_db_session() as db:
+        orchestrator = PipelineOrchestrator(db)
 
-    if orchestrator.remove_force_include(article_id):
-        console.print(f"[green]Article {article_id} removed from force-include list[/green]")
-    else:
-        console.print(f"[yellow]Article {article_id} was not in force-include list[/yellow]")
+        if orchestrator.remove_force_include(article_id):
+            console.print(f"[green]Article {article_id} removed from force-include list[/green]")
+        else:
+            console.print(f"[yellow]Article {article_id} was not in force-include list[/yellow]")
 
 
 @app.command()
@@ -504,28 +506,18 @@ def reset(
     ),
 ):
     """Reset pipeline run to re-execute from a specific stage."""
-    db = get_db()
-    orchestrator = PipelineOrchestrator(db)
     stage = parse_stage(from_stage)
 
-    try:
-        run = orchestrator.reset_pipeline_run(run_id, stage)
-        console.print(f"[green]Pipeline run {run_id} reset from stage '{from_stage}'[/green]")
-        console.print(f"  Status: {run.status.value}")
-    except ValueError as e:
-        console.print(f"[red]Error: {e}[/red]")
-        raise typer.Exit(1)
+    with get_db_session() as db:
+        orchestrator = PipelineOrchestrator(db)
 
-
-@app.command()
-def providers():
-    """List available LLM providers."""
-    from app.services.pipeline.llm_filter_service import PROVIDERS
-
-    console.print("[bold]Available LLM Providers:[/bold]")
-    for p in PROVIDERS:
-        default = " (default)" if p == settings.default_llm_provider else ""
-        console.print(f"  • {p}{default}")
+        try:
+            run = orchestrator.reset_pipeline_run(run_id, stage)
+            console.print(f"[green]Pipeline run {run_id} reset from stage '{from_stage}'[/green]")
+            console.print(f"  Status: {run.status.value}")
+        except ValueError as e:
+            console.print(f"[red]Error: {e}[/red]")
+            raise typer.Exit(1)
 
 
 # ── Analysis subcommands ─────────────────────────────────
@@ -537,102 +529,95 @@ app.add_typer(analysis_app, name="analysis")
 @analysis_app.command("status")
 def analysis_status():
     """Show analysis tracking statistics."""
-    db = get_db()
     from app.services.pipeline.llm_analysis_service import LLMAnalysisService
 
-    service = LLMAnalysisService(db)
-    stats = service.get_tracking_stats()
+    with get_db_session() as db:
+        service = LLMAnalysisService(db)
+        stats = service.get_tracking_stats()
 
-    table = Table(show_header=False)
-    table.add_column("Metric", style="bold")
-    table.add_column("Value")
+        table = Table(show_header=False)
+        table.add_column("Metric", style="bold")
+        table.add_column("Value")
 
-    table.add_row("Total Tracked", f"{stats['total']:,}")
-    table.add_row("[green]Success[/green]", f"{stats['success']:,}")
-    table.add_row("[red]Failed (needs re-analysis)[/red]", f"{stats['failed']:,}")
-    table.add_row("[magenta]Store Failed (retry storage)[/magenta]", f"{stats['store_failed']:,}")
-    table.add_row("[yellow]Pending[/yellow]", f"{stats['pending']:,}")
+        table.add_row("Total Tracked", f"{stats['total']:,}")
+        table.add_row("[green]Success[/green]", f"{stats['success']:,}")
+        table.add_row("[red]Failed (needs re-analysis)[/red]", f"{stats['failed']:,}")
+        table.add_row("[magenta]Store Failed (retry storage)[/magenta]", f"{stats['store_failed']:,}")
+        table.add_row("[yellow]Pending[/yellow]", f"{stats['pending']:,}")
 
-    console.print(Panel("[bold]Analysis Tracking Statistics[/bold]"))
-    console.print(table)
+        console.print(Panel("[bold]Analysis Tracking Statistics[/bold]"))
+        console.print(table)
 
 
 @analysis_app.command("retry-failed")
 def analysis_retry_failed():
     """Re-submit all failed articles for analysis."""
-    db = get_db()
     from app.services.pipeline.llm_analysis_service import LLMAnalysisService
 
-    service = LLMAnalysisService(db)
-    stats = service.get_tracking_stats()
+    with get_db_session() as db:
+        service = LLMAnalysisService(db)
+        stats = service.get_tracking_stats()
 
-    if stats["failed"] == 0:
-        console.print("[green]No failed articles to retry[/green]")
-        return
+        if stats["failed"] == 0:
+            console.print("[green]No failed articles to retry[/green]")
+            return
 
-    console.print(f"Retrying {stats['failed']} failed articles...")
+        console.print(f"Retrying {stats['failed']} failed articles...")
 
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        BarColumn(),
-        TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
-        console=console,
-    ) as progress:
-        task = progress.add_task("Submitting batch...", total=100)
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+            console=console,
+        ) as progress:
+            task = progress.add_task("Submitting batch...", total=100)
 
-        def update_progress(stage: str, current: int, total: int):
-            if total > 0:
-                pct = (current / total) * 100
-                progress.update(
-                    task,
-                    description=f"[{stage}] {current}/{total}",
-                    completed=pct,
+            batch_id, count = asyncio.run(
+                service.retry_failed(
+                    progress_callback=_make_progress_callback(progress, task)
                 )
+            )
 
-        batch_id, count = asyncio.run(
-            service.retry_failed(progress_callback=update_progress)
+        console.print(f"[green]Retried {count} articles in batch {batch_id}[/green]")
+
+        # Show updated stats
+        new_stats = service.get_tracking_stats()
+        console.print(
+            f"Success: {new_stats['success']}, "
+            f"Failed: {new_stats['failed']}, "
+            f"Pending: {new_stats['pending']}"
         )
-
-    console.print(f"[green]Retried {count} articles in batch {batch_id}[/green]")
-
-    # Show updated stats
-    new_stats = service.get_tracking_stats()
-    console.print(
-        f"Success: {new_stats['success']}, "
-        f"Failed: {new_stats['failed']}, "
-        f"Pending: {new_stats['pending']}"
-    )
 
 
 @analysis_app.command("retry-storage")
 def analysis_retry_storage():
     """Retry TimescaleDB storage for STORE_FAILED articles (no LLM re-analysis)."""
-    db = get_db()
     from app.services.pipeline.llm_analysis_service import LLMAnalysisService
 
-    service = LLMAnalysisService(db)
-    stats = service.get_tracking_stats()
+    with get_db_session() as db:
+        service = LLMAnalysisService(db)
+        stats = service.get_tracking_stats()
 
-    if stats["store_failed"] == 0:
-        console.print("[green]No STORE_FAILED articles to retry[/green]")
-        return
+        if stats["store_failed"] == 0:
+            console.print("[green]No STORE_FAILED articles to retry[/green]")
+            return
 
-    console.print(f"Retrying storage for {stats['store_failed']} articles...")
+        console.print(f"Retrying storage for {stats['store_failed']} articles...")
 
-    stored, still_failed = service.retry_store_failed()
+        stored, still_failed = service.retry_store_failed()
 
-    console.print(f"[green]Stored: {stored}[/green]")
-    if still_failed > 0:
-        console.print(f"[red]Still failed: {still_failed}[/red]")
+        console.print(f"[green]Stored: {stored}[/green]")
+        if still_failed > 0:
+            console.print(f"[red]Still failed: {still_failed}[/red]")
 
-    # Show updated stats
-    new_stats = service.get_tracking_stats()
-    console.print(
-        f"Success: {new_stats['success']}, "
-        f"Failed: {new_stats['failed']}, "
-        f"Store Failed: {new_stats['store_failed']}"
-    )
+        # Show updated stats
+        new_stats = service.get_tracking_stats()
+        console.print(
+            f"Success: {new_stats['success']}, "
+            f"Failed: {new_stats['failed']}, "
+            f"Store Failed: {new_stats['store_failed']}"
+        )
 
 
 @analysis_app.command("clear")
@@ -659,20 +644,20 @@ def analysis_clear(
         console.print("[red]Specify only one option[/red]")
         raise typer.Exit(1)
 
-    db = get_db()
     from app.services.pipeline.llm_analysis_service import LLMAnalysisService
 
-    service = LLMAnalysisService(db)
-    count, ts_deleted = service.clear_tracking(
-        all_records=all_records,
-        failed_only=failed,
-        article_id=article_id,
-        batch_id=batch_id,
-    )
+    with get_db_session() as db:
+        service = LLMAnalysisService(db)
+        count, ts_deleted = service.clear_tracking(
+            all_records=all_records,
+            failed_only=failed,
+            article_id=article_id,
+            batch_id=batch_id,
+        )
 
-    console.print(f"[green]Cleared {count} tracking records[/green]")
-    if ts_deleted > 0:
-        console.print(f"[green]Deleted {ts_deleted} articles from TimescaleDB[/green]")
+        console.print(f"[green]Cleared {count} tracking records[/green]")
+        if ts_deleted > 0:
+            console.print(f"[green]Deleted {ts_deleted} articles from TimescaleDB[/green]")
 
 
 def _display_run_stats(stats):

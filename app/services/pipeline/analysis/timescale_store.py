@@ -11,9 +11,9 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.config import settings
 from app.models import NewsArticle
-from schemas.llm_output import NewsAnalysisResult
+from .schemas import NewsAnalysisResult
 
-from .base_provider import AnalysisResponse
+from .base_provider import AnalysisResponse, parse_article_id
 
 
 @dataclass
@@ -25,7 +25,7 @@ class StoreFailure:
     is_transient: bool  # True = connection issue, False = data error
 
 
-class ResultStoreService:
+class TimescaleStore:
     """Persist LLM analysis results to TimescaleDB.
 
     One transaction per article — failures are logged and skipped
@@ -57,7 +57,7 @@ class ResultStoreService:
         failures: list[StoreFailure] = []
 
         for resp in responses:
-            article_id = self._parse_article_id(resp.custom_id)
+            article_id = parse_article_id(resp.custom_id)
             if article_id is None:
                 logger.warning(f"Cannot parse article_id from: {resp.custom_id}")
                 continue
@@ -524,14 +524,6 @@ class ResultStoreService:
         try:
             return datetime.strptime(date_str, "%Y-%m-%d").date()
         except ValueError:
-            return None
-
-    @staticmethod
-    def _parse_article_id(custom_id: str) -> int | None:
-        """Extract article_id from custom_id like 'article_123'."""
-        try:
-            return int(custom_id.split("_", 1)[1])
-        except (IndexError, ValueError):
             return None
 
     @staticmethod

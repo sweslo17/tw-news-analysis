@@ -17,6 +17,7 @@ from .analysis.base_provider import (
     AnalysisRequest,
     AnalysisResponse,
     BatchStatus,
+    parse_article_id,
 )
 from .analysis.openai_batch_provider import OpenAIBatchProvider
 
@@ -103,7 +104,7 @@ class LLMAnalysisService:
         fail_count = 0
 
         for resp in responses:
-            article_id = self._parse_article_id(resp.custom_id)
+            article_id = parse_article_id(resp.custom_id)
             if article_id is None:
                 logger.warning(f"Cannot parse article_id from custom_id: {resp.custom_id}")
                 fail_count += 1
@@ -208,8 +209,8 @@ class LLMAnalysisService:
 
         try:
             if self._result_store is None:
-                from .analysis.result_store import ResultStoreService
-                self._result_store = ResultStoreService()
+                from .analysis.timescale_store import TimescaleStore
+                self._result_store = TimescaleStore()
 
             return self._result_store.delete_by_external_ids(external_ids)
         except Exception as e:
@@ -394,7 +395,7 @@ class LLMAnalysisService:
 
         # Build response_json_map for _mark_storage_failures
         response_json_map = {
-            self._parse_article_id(r.custom_id): r.result_json
+            parse_article_id(r.custom_id): r.result_json
             for r in responses
             if r.result_json
         }
@@ -408,8 +409,8 @@ class LLMAnalysisService:
         # Attempt storage
         try:
             if self._result_store is None:
-                from .analysis.result_store import ResultStoreService
-                self._result_store = ResultStoreService()
+                from .analysis.timescale_store import TimescaleStore
+                self._result_store = TimescaleStore()
 
             stored, failures = self._result_store.store_batch(articles_map, responses)
 
@@ -430,7 +431,7 @@ class LLMAnalysisService:
 
         except Exception as e:
             logger.error(f"Storage retry failed: {e}")
-            from .analysis.result_store import StoreFailure
+            from .analysis.timescale_store import StoreFailure
 
             all_transient = [
                 StoreFailure(aid, f"TimescaleDB connection error: {e}", True)
@@ -513,15 +514,15 @@ class LLMAnalysisService:
         # Build {article_id: result_json} lookup for saving on transient failures
         response_json_map: dict[int, str] = {}
         for r in responses:
-            aid = self._parse_article_id(r.custom_id)
+            aid = parse_article_id(r.custom_id)
             if aid is not None and r.result_json:
                 response_json_map[aid] = r.result_json
 
         try:
             if self._result_store is None:
-                from .analysis.result_store import ResultStoreService
+                from .analysis.timescale_store import TimescaleStore
 
-                self._result_store = ResultStoreService()
+                self._result_store = TimescaleStore()
 
             stored, failures = self._result_store.store_batch(articles_map, responses)
             logger.info(
@@ -535,7 +536,7 @@ class LLMAnalysisService:
         except Exception as e:
             # Entire storage call failed (e.g. connection) — all are transient
             logger.error(f"TimescaleDB storage failed: {e}")
-            from .analysis.result_store import StoreFailure
+            from .analysis.timescale_store import StoreFailure
 
             all_transient = [
                 StoreFailure(aid, f"TimescaleDB connection error: {e}", True)
@@ -580,13 +581,3 @@ class LLMAnalysisService:
             tracking.error_message = failure.error_message
 
         self.db.commit()
-
-    # ── Helpers ───────────────────────────────────────────────
-
-    @staticmethod
-    def _parse_article_id(custom_id: str) -> int | None:
-        """Extract article_id from custom_id like 'article_123'."""
-        try:
-            return int(custom_id.split("_", 1)[1])
-        except (IndexError, ValueError):
-            return None

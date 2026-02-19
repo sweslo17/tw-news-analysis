@@ -36,17 +36,8 @@ class Settings(BaseSettings):
     auto_archive_hour: int = 1  # Hour to run (24h format)
     auto_archive_minute: int = 0  # Minute to run
 
-    # LLM Provider API Keys
-    groq_api_key: str | None = None
-    anthropic_api_key: str | None = None
+    # OpenAI API Key (for LLM analysis batch API)
     openai_api_key: str | None = None
-    google_api_key: str | None = None
-
-    # LLM Settings (for rule-based LLM filter)
-    default_llm_provider: str = "groq"  # groq, anthropic, openai, google
-    llm_model: str = "llama-3.3-70b-versatile"  # Default model for LLM filter
-    llm_batch_size: int = 10  # Articles per batch for LLM processing
-    llm_max_retries: int = 3  # Max retries on failure
 
     # LLM Analysis Settings (OpenAI Batch API)
     llm_analysis_model: str = "gpt-4o-mini"  # Model for structured analysis
