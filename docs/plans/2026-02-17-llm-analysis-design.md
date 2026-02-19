@@ -94,14 +94,16 @@ article_analysis_tracking
 ├── id (PK)
 ├── article_id (FK → news_articles.id, indexed)
 ├── batch_id (OpenAI batch ID, indexed)
-├── status: pending / success / failed
+├── status: pending / success / failed / store_failed
 ├── error_message (nullable)
+├── result_json (nullable, saved for store_failed retry)
 ├── created_at
 ├── updated_at
 ```
 
 - On batch submit → insert `status=pending` per article.
 - On batch complete → update to `success` or `failed` per article.
+- On TimescaleDB transient error → `store_failed` (LLM result saved in `result_json` for retry).
 - On next analysis run → exclude articles with `status=success`.
 
 ## CLI Commands
@@ -115,6 +117,7 @@ article_analysis_tracking
 | Command | Description |
 |---------|-------------|
 | `analysis retry-failed` | Re-submit all `failed` articles as a new batch |
+| `analysis retry-storage` | Retry TimescaleDB storage for `store_failed` articles (no LLM re-analysis) |
 | `analysis clear --all` | Delete all tracking records + corresponding TimescaleDB articles |
 | `analysis clear --failed` | Delete only failed tracking records (TimescaleDB unaffected — failed articles were never stored) |
 | `analysis clear --article-id <ID>` | Delete tracking + TimescaleDB data for specific article |
@@ -126,6 +129,8 @@ article_analysis_tracking
 - **Per-article parse failure** → mark `failed` with error_message in tracking, skip and continue.
 - **Batch-level failure** (OpenAI error) → Pipeline marks `FAILED` + error_log.
 - **Polling timeout** (configurable max wait) → Pipeline marks `PAUSED`, resumable.
+- **TimescaleDB transient error** (connection, timeout) → mark `store_failed` + save `result_json`; retry via `analysis retry-storage`.
+- **TimescaleDB data error** (CHECK violation, enum mismatch) → mark `failed`; needs LLM re-analysis via `analysis retry-failed`.
 
 ## Storage
 

@@ -29,7 +29,6 @@ class PipelineOrchestrator:
         self.db = db
         self._fetcher: ArticleFetcher | None = None
         self._rule_filter: RuleFilterService | None = None
-        self._analysis: LLMAnalysisService | None = None
         self._store: ResultStoreService | None = None
         self._stats: StatisticsService | None = None
 
@@ -205,7 +204,7 @@ class PipelineOrchestrator:
                 self.store.update_pipeline_run_status(run, PipelineRunStatus.PAUSED)
                 return run
 
-            # Stage 5: STORE (finalize)
+            # Stage 4: STORE (finalize)
             self.store.update_pipeline_run_status(
                 run, PipelineRunStatus.RUNNING, PipelineStage.STORE
             )

@@ -213,7 +213,7 @@ class LLMAnalysisService:
 
             return self._result_store.delete_by_external_ids(external_ids)
         except Exception as e:
-            logger.error(f"TimescaleDB cleanup failed (non-fatal): {e}")
+            logger.warning(f"TimescaleDB cleanup failed (non-fatal): {e}")
             return 0
 
     # ── Core analysis flow ───────────────────────────────────
