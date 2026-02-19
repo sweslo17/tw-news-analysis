@@ -62,9 +62,15 @@ news-analyze/
 │   │       ├── pipeline_orchestrator.py  # Pipeline 編排器
 │   │       ├── article_fetcher.py        # 文章擷取
 │   │       ├── rule_filter_service.py    # 規則篩選
-│   │       ├── llm_analysis_service.py   # LLM 分析
-│   │       ├── result_store_service.py   # 結果儲存
-│   │       └── statistics_service.py     # 統計服務
+│   │       ├── llm_analysis_service.py   # LLM 分析編排
+│   │       ├── pipeline_run_store.py     # Pipeline 執行結果儲存
+│   │       ├── statistics_service.py     # 統計服務
+│   │       └── analysis/                 # LLM 分析模組
+│   │           ├── base_provider.py      # 分析 Provider 抽象基底
+│   │           ├── openai_batch_provider.py  # OpenAI Batch API 實作
+│   │           ├── timescale_store.py    # TimescaleDB 儲存
+│   │           ├── schemas.py            # LLM 結構化輸出 Schema
+│   │           └── prompts.py            # System/User Prompt
 │   └── templates/               # Jinja2 HTML 模板
 ├── crawlers/
 │   ├── base.py                  # 爬蟲抽象基底類別
