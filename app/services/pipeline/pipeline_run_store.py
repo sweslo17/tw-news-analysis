@@ -1,5 +1,6 @@
 """Result store service for pipeline."""
 
+from loguru import logger
 from sqlalchemy.orm import Session
 
 from app.models import (
@@ -123,6 +124,7 @@ class PipelineRunStore:
         """
         from datetime import datetime
 
+        old_status = pipeline_run.status
         pipeline_run.status = status
         if current_stage is not None:
             pipeline_run.current_stage = current_stage
@@ -135,6 +137,11 @@ class PipelineRunStore:
 
         if status in (PipelineRunStatus.COMPLETED, PipelineRunStatus.FAILED):
             pipeline_run.completed_at = datetime.utcnow()
+
+        stage_info = f" stage={current_stage.value}" if current_stage else ""
+        logger.debug(
+            f"Run #{pipeline_run.id} status: {old_status.value}→{status.value}{stage_info}"
+        )
 
         if commit:
             self.db.commit()

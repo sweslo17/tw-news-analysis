@@ -232,6 +232,7 @@ class OpenAIBatchProvider(BaseAnalysisProvider):
                 custom_id = json.loads(line).get("custom_id", "")
             except Exception:
                 pass
+            logger.warning(f"Failed to parse result line (custom_id={custom_id}): {e}")
             return AnalysisResponse(
                 custom_id=custom_id,
                 success=False,
@@ -251,6 +252,7 @@ class OpenAIBatchProvider(BaseAnalysisProvider):
                 error_message=error_msg,
             )
         except Exception as e:
+            logger.warning(f"Failed to parse error line: {e}")
             return AnalysisResponse(
                 custom_id="",
                 success=False,

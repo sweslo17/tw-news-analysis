@@ -86,6 +86,7 @@ class PipelineOrchestrator:
         self.db.add(run)
         self.db.commit()
         self.db.refresh(run)
+        logger.info(f"Created pipeline run #{run.id}: {name}")
         return run
 
     def create_quick_run(self, days: int | None = None) -> PipelineRun:
@@ -142,6 +143,7 @@ class PipelineOrchestrator:
             )
 
             # Stage 1: FETCH
+            logger.info(f"Run #{run.id} stage=FETCH started")
             if progress_callback:
                 progress_callback("fetch", 0, 0)
 
@@ -150,6 +152,7 @@ class PipelineOrchestrator:
                 total_articles = min(total_articles, limit)
             run.total_articles = total_articles
             self.db.commit()
+            logger.info(f"Run #{run.id} stage=FETCH found {total_articles} articles")
 
             if until_stage == PipelineStage.FETCH:
                 self.store.update_pipeline_run_status(run, PipelineRunStatus.PAUSED)
@@ -159,6 +162,7 @@ class PipelineOrchestrator:
             self.store.update_pipeline_run_status(
                 run, PipelineRunStatus.RUNNING, PipelineStage.RULE_FILTER
             )
+            logger.info(f"Run #{run.id} stage=RULE_FILTER started")
 
             processed = 0
             all_passed_articles = []
@@ -176,6 +180,10 @@ class PipelineOrchestrator:
 
             # Update stats after rule filter
             self.store.update_pipeline_run_stats(run)
+            logger.info(
+                f"Run #{run.id} stage=RULE_FILTER done: "
+                f"passed={len(all_passed_articles)}, filtered={total_articles - len(all_passed_articles)}"
+            )
 
             if until_stage == PipelineStage.RULE_FILTER:
                 self.store.update_pipeline_run_status(run, PipelineRunStatus.PAUSED)
@@ -186,6 +194,7 @@ class PipelineOrchestrator:
                 self.store.update_pipeline_run_status(
                     run, PipelineRunStatus.RUNNING, PipelineStage.LLM_ANALYSIS
                 )
+                logger.info(f"Run #{run.id} stage=LLM_ANALYSIS started with {len(all_passed_articles)} articles")
 
                 analysis_service = self.get_analysis_service()
 
@@ -210,10 +219,12 @@ class PipelineOrchestrator:
             )
             self.store.update_pipeline_run_stats(run)
             self.store.update_pipeline_run_status(run, PipelineRunStatus.COMPLETED)
+            logger.info(f"Run #{run.id} completed successfully")
 
             return run
 
         except Exception as e:
+            logger.error(f"Run #{run.id} failed: {e}")
             self.store.update_pipeline_run_status(
                 run, PipelineRunStatus.FAILED, error_log=str(e)
             )
