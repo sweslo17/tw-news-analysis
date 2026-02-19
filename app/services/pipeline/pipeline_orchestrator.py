@@ -114,6 +114,7 @@ class PipelineOrchestrator:
         run_id: int,
         until_stage: PipelineStage | None = None,
         progress_callback: Callable[[str, int, int], None] | None = None,
+        limit: int | None = None,
     ) -> PipelineRun:
         """
         Run the pipeline for a given run.
@@ -123,6 +124,7 @@ class PipelineOrchestrator:
             until_stage: Stop after this stage (default: run all stages)
             progress_callback: Optional callback for progress updates
                 (stage_name, current, total)
+            limit: Maximum number of articles to process (None = no limit)
 
         Returns:
             Updated PipelineRun
@@ -145,6 +147,8 @@ class PipelineOrchestrator:
                 progress_callback("fetch", 0, 0)
 
             total_articles = self.fetcher.count_articles_for_run(run)
+            if limit is not None:
+                total_articles = min(total_articles, limit)
             run.total_articles = total_articles
             self.db.commit()
 
@@ -160,7 +164,7 @@ class PipelineOrchestrator:
             processed = 0
             all_passed_articles = []
 
-            for batch in self.fetcher.fetch_articles_for_run(run, batch_size=100):
+            for batch in self.fetcher.fetch_articles_for_run(run, batch_size=100, limit=limit):
                 passed, filter_results = self.rule_filter.filter_articles_batch(
                     batch, run.id
                 )
@@ -221,6 +225,7 @@ class PipelineOrchestrator:
         days: int | None = None,
         until_stage: PipelineStage = PipelineStage.RULE_FILTER,
         progress_callback: Callable[[str, int, int], None] | None = None,
+        limit: int | None = None,
     ) -> PipelineRun:
         """
         Create and run a quick pipeline.
@@ -229,13 +234,14 @@ class PipelineOrchestrator:
             days: Number of days to look back
             until_stage: Stop after this stage (default: RULE_FILTER)
             progress_callback: Optional progress callback
+            limit: Maximum number of articles to process (None = no limit)
 
         Returns:
             Completed PipelineRun
         """
         run = self.create_quick_run(days)
         return await self.run_pipeline(
-            run.id, until_stage=until_stage, progress_callback=progress_callback
+            run.id, until_stage=until_stage, progress_callback=progress_callback, limit=limit
         )
 
     async def run_quick_pipeline_with_range(
@@ -245,6 +251,7 @@ class PipelineOrchestrator:
         name_suffix: str = "",
         until_stage: PipelineStage = PipelineStage.RULE_FILTER,
         progress_callback: Callable[[str, int, int], None] | None = None,
+        limit: int | None = None,
     ) -> PipelineRun:
         """
         Create and run a pipeline with specific date range.
@@ -255,6 +262,7 @@ class PipelineOrchestrator:
             name_suffix: Suffix for the run name
             until_stage: Stop after this stage (default: RULE_FILTER)
             progress_callback: Optional progress callback
+            limit: Maximum number of articles to process (None = no limit)
 
         Returns:
             Completed PipelineRun
@@ -262,7 +270,7 @@ class PipelineOrchestrator:
         name = f"Quick run - {name_suffix} - {datetime.now().strftime('%Y-%m-%d %H:%M')}"
         run = self.create_pipeline_run(name=name, date_from=date_from, date_to=date_to)
         return await self.run_pipeline(
-            run.id, until_stage=until_stage, progress_callback=progress_callback
+            run.id, until_stage=until_stage, progress_callback=progress_callback, limit=limit
         )
 
     def reset_pipeline_run(

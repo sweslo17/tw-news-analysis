@@ -31,6 +31,7 @@ class LLMAnalysisService:
     ):
         self.db = db
         self._provider = provider
+        self._result_store = None
 
     @property
     def provider(self) -> BaseAnalysisProvider:
@@ -70,7 +71,7 @@ class LLMAnalysisService:
             .group_by(ArticleAnalysisTracking.status)
             .all()
         )
-        result = {"pending": 0, "success": 0, "failed": 0, "total": 0}
+        result = {"pending": 0, "success": 0, "failed": 0, "store_failed": 0, "total": 0}
         for status, count in stats:
             result[status.value] = count
             result["total"] += count
@@ -143,8 +144,11 @@ class LLMAnalysisService:
         failed_only: bool = False,
         article_id: int | None = None,
         batch_id: str | None = None,
-    ) -> int:
-        """Clear tracking records. Returns number of deleted records."""
+    ) -> tuple[int, int]:
+        """Clear tracking records and associated TimescaleDB data.
+
+        Returns (tracking_records_deleted, timescaledb_articles_deleted).
+        """
         query = self.db.query(ArticleAnalysisTracking)
 
         if all_records:
@@ -162,13 +166,55 @@ class LLMAnalysisService:
                 ArticleAnalysisTracking.batch_id == batch_id
             )
         else:
-            return 0
+            return 0, 0
+
+        # Clean TimescaleDB for SUCCESS records (failed ones were never stored)
+        ts_deleted = 0
+        if not failed_only:
+            ts_deleted = self._clear_timescaledb(query)
 
         count = query.count()
         query.delete(synchronize_session=False)
         self.db.commit()
-        logger.info(f"Cleared {count} tracking records")
-        return count
+        logger.info(f"Cleared {count} tracking records, {ts_deleted} TimescaleDB articles")
+        return count, ts_deleted
+
+    def _clear_timescaledb(self, tracking_query) -> int:
+        """Delete corresponding articles from TimescaleDB for SUCCESS records."""
+        if not settings.timescale_url:
+            return 0
+
+        # Get article_ids with SUCCESS status from the query scope
+        success_rows = (
+            tracking_query
+            .filter(ArticleAnalysisTracking.status == AnalysisStatus.SUCCESS)
+            .with_entities(ArticleAnalysisTracking.article_id)
+            .all()
+        )
+        if not success_rows:
+            return 0
+
+        article_ids = [r[0] for r in success_rows]
+
+        # Look up url_hash (= external_id in TimescaleDB) for these articles
+        articles = (
+            self.db.query(NewsArticle.url_hash)
+            .filter(NewsArticle.id.in_(article_ids))
+            .all()
+        )
+        external_ids = [a[0] for a in articles if a[0]]
+        if not external_ids:
+            return 0
+
+        try:
+            if self._result_store is None:
+                from .analysis.result_store import ResultStoreService
+                self._result_store = ResultStoreService()
+
+            return self._result_store.delete_by_external_ids(external_ids)
+        except Exception as e:
+            logger.error(f"TimescaleDB cleanup failed (non-fatal): {e}")
+            return 0
 
     # ── Core analysis flow ───────────────────────────────────
 
@@ -236,9 +282,10 @@ class LLMAnalysisService:
             responses
         )
 
-        # Store results (placeholder for future DB integration)
+        # Store results to TimescaleDB
         successful_responses = [r for r in responses if r.success]
-        self.store_results(successful_responses)
+        articles_map = {a.id: a for a in to_analyze}
+        self.store_results(successful_responses, articles_map)
 
         logger.info(
             f"Analysis complete: {success_count} success, {fail_count} failed"
@@ -284,7 +331,113 @@ class LLMAnalysisService:
         )
         self._update_tracking_from_responses(responses)
 
+        # Store results to TimescaleDB
+        successful_responses = [r for r in responses if r.success]
+        articles_map = {a.id: a for a in articles}
+        self.store_results(successful_responses, articles_map)
+
         return batch_id, len(articles)
+
+    def retry_store_failed(self) -> tuple[int, int]:
+        """Retry TimescaleDB storage for STORE_FAILED articles (no LLM re-analysis).
+
+        Returns:
+            (success_count, still_failed_count)
+        """
+        records = (
+            self.db.query(ArticleAnalysisTracking)
+            .filter(ArticleAnalysisTracking.status == AnalysisStatus.STORE_FAILED)
+            .all()
+        )
+
+        if not records:
+            logger.info("No STORE_FAILED articles to retry")
+            return 0, 0
+
+        if not settings.timescale_url:
+            logger.warning("TIMESCALE_URL not configured, cannot retry storage")
+            return 0, len(records)
+
+        # Load articles for these tracking records
+        article_ids = [r.article_id for r in records]
+        articles = (
+            self.db.query(NewsArticle)
+            .filter(NewsArticle.id.in_(article_ids))
+            .all()
+        )
+        articles_map = {a.id: a for a in articles}
+
+        # Build AnalysisResponse-like objects from saved result_json
+        from .analysis.base_provider import AnalysisResponse as AR
+
+        responses = []
+        for r in records:
+            if not r.result_json:
+                logger.warning(
+                    f"Article {r.article_id} STORE_FAILED but no result_json saved, "
+                    "reverting to FAILED"
+                )
+                r.status = AnalysisStatus.FAILED
+                r.error_message = "No result_json saved for storage retry"
+                continue
+            responses.append(
+                AR(
+                    custom_id=f"article_{r.article_id}",
+                    success=True,
+                    result_json=r.result_json,
+                )
+            )
+
+        if not responses:
+            self.db.commit()
+            return 0, 0
+
+        # Build response_json_map for _mark_storage_failures
+        response_json_map = {
+            self._parse_article_id(r.custom_id): r.result_json
+            for r in responses
+            if r.result_json
+        }
+
+        # Reset to SUCCESS before store attempt (so _mark_storage_failures can find them)
+        for r in records:
+            if r.status == AnalysisStatus.STORE_FAILED and r.result_json:
+                r.status = AnalysisStatus.SUCCESS
+        self.db.commit()
+
+        # Attempt storage
+        try:
+            if self._result_store is None:
+                from .analysis.result_store import ResultStoreService
+                self._result_store = ResultStoreService()
+
+            stored, failures = self._result_store.store_batch(articles_map, responses)
+
+            if failures:
+                self._mark_storage_failures(failures, response_json_map)
+
+            # Clear result_json for successfully stored articles
+            for r in records:
+                if r.status == AnalysisStatus.SUCCESS:
+                    r.result_json = None
+            self.db.commit()
+
+            still_failed = len(failures)
+            logger.info(
+                f"Storage retry: {stored} stored, {still_failed} still failed"
+            )
+            return stored, still_failed
+
+        except Exception as e:
+            logger.error(f"Storage retry failed: {e}")
+            from .analysis.result_store import StoreFailure
+
+            all_transient = [
+                StoreFailure(aid, f"TimescaleDB connection error: {e}", True)
+                for aid in response_json_map
+            ]
+            self._mark_storage_failures(all_transient, response_json_map)
+            return 0, len(responses)
 
     # ── Polling ──────────────────────────────────────────────
 
@@ -333,16 +486,100 @@ class LLMAnalysisService:
 
     # ── Storage hook ────────────────────────────────────────────
 
-    def store_results(self, responses: list[AnalysisResponse]) -> None:
-        """Store successful analysis results.
+    def store_results(
+        self,
+        responses: list[AnalysisResponse],
+        articles_map: dict[int, NewsArticle] | None = None,
+    ) -> None:
+        """Store successful analysis results to TimescaleDB.
 
-        Placeholder for future integration with a separate results DB.
-        Override or extend this method when the storage layer is ready.
+        Gracefully degrades: if timescale_url is not configured or storage
+        fails, the pipeline continues without interruption.
         """
-        if responses:
+        if not responses:
+            return
+
+        if not settings.timescale_url:
             logger.info(
-                f"{len(responses)} analysis results ready for storage (not persisted yet)"
+                f"{len(responses)} analysis results ready "
+                "(TIMESCALE_URL not configured, skipping storage)"
             )
+            return
+
+        if articles_map is None:
+            logger.warning("articles_map not provided, cannot store results")
+            return
+
+        # Build {article_id: result_json} lookup for saving on transient failures
+        response_json_map: dict[int, str] = {}
+        for r in responses:
+            aid = self._parse_article_id(r.custom_id)
+            if aid is not None and r.result_json:
+                response_json_map[aid] = r.result_json
+
+        try:
+            if self._result_store is None:
+                from .analysis.result_store import ResultStoreService
+
+                self._result_store = ResultStoreService()
+
+            stored, failures = self._result_store.store_batch(articles_map, responses)
+            logger.info(
+                f"TimescaleDB: {stored} stored, {len(failures)} failed "
+                f"out of {len(responses)} responses"
+            )
+
+            if failures:
+                self._mark_storage_failures(failures, response_json_map)
+
+        except Exception as e:
+            # Entire storage call failed (e.g. connection) — all are transient
+            logger.error(f"TimescaleDB storage failed: {e}")
+            from .analysis.result_store import StoreFailure
+
+            all_transient = [
+                StoreFailure(aid, f"TimescaleDB connection error: {e}", True)
+                for aid in response_json_map
+            ]
+            self._mark_storage_failures(all_transient, response_json_map)
+
+    def _mark_storage_failures(
+        self,
+        failures: list,
+        response_json_map: dict[int, str],
+    ) -> None:
+        """Revert SUCCESS tracking records based on failure type.
+
+        - is_transient=True  → STORE_FAILED + save result_json (retry storage only)
+        - is_transient=False → FAILED (needs LLM re-analysis)
+        """
+        for failure in failures:
+            tracking = (
+                self.db.query(ArticleAnalysisTracking)
+                .filter(
+                    ArticleAnalysisTracking.article_id == failure.article_id,
+                    ArticleAnalysisTracking.status == AnalysisStatus.SUCCESS,
+                )
+                .order_by(ArticleAnalysisTracking.created_at.desc())
+                .first()
+            )
+            if not tracking:
+                continue
+
+            if failure.is_transient:
+                tracking.status = AnalysisStatus.STORE_FAILED
+                tracking.result_json = response_json_map.get(failure.article_id)
+                logger.warning(
+                    f"Article {failure.article_id} → STORE_FAILED: {failure.error_message}"
+                )
+            else:
+                tracking.status = AnalysisStatus.FAILED
+                logger.warning(
+                    f"Article {failure.article_id} → FAILED: {failure.error_message}"
+                )
+            tracking.error_message = failure.error_message
+
+        self.db.commit()
 
     # ── Helpers ───────────────────────────────────────────────
 

@@ -108,8 +108,14 @@ def quick(
     date: Optional[str] = typer.Option(
         None, "--date", help="Process specific date (YYYY-MM-DD)"
     ),
+    latest: bool = typer.Option(
+        False, "--latest", help="Process latest articles (use with --limit)"
+    ),
     until: str = typer.Option(
         "rule_filter", "--until", "-u", help="Run until this stage"
+    ),
+    limit: Optional[int] = typer.Option(
+        None, "--limit", "-l", help="Maximum number of articles to process"
     ),
 ):
     """Quick run: Fetch articles and apply rule-based filter.
@@ -120,6 +126,8 @@ def quick(
         quick --minutes 60      # Last 60 minutes
         quick --yesterday       # Yesterday (00:00 ~ 23:59)
         quick --date 2025-01-20 # Specific date
+        quick --days 7 --limit 10  # Test with 10 articles from last week
+        quick --latest --limit 10  # Latest 10 articles regardless of date
     """
     # Validate options - only one time range option allowed
     options_set = sum([
@@ -128,9 +136,10 @@ def quick(
         minutes is not None,
         yesterday,
         date is not None,
+        latest,
     ])
     if options_set > 1:
-        console.print("[red]Error: Use only one of --days, --hours, --minutes, --yesterday, or --date[/red]")
+        console.print("[red]Error: Use only one of --days, --hours, --minutes, --yesterday, --date, or --latest[/red]")
         raise typer.Exit(1)
 
     # Default to --days 1 if no option specified
@@ -142,7 +151,10 @@ def quick(
     until_stage = parse_stage(until)
 
     # Calculate date range
-    date_from, date_to, name_suffix = _get_date_range(days, hours, minutes, yesterday, date)
+    if latest:
+        date_from, date_to, name_suffix = None, None, f"latest {limit or 'all'}"
+    else:
+        date_from, date_to, name_suffix = _get_date_range(days, hours, minutes, yesterday, date)
 
     with Progress(
         SpinnerColumn(),
@@ -167,6 +179,7 @@ def quick(
                 name_suffix=name_suffix,
                 until_stage=until_stage,
                 progress_callback=update_progress,
+                limit=limit,
             )
         )
 
@@ -536,7 +549,8 @@ def analysis_status():
 
     table.add_row("Total Tracked", f"{stats['total']:,}")
     table.add_row("[green]Success[/green]", f"{stats['success']:,}")
-    table.add_row("[red]Failed[/red]", f"{stats['failed']:,}")
+    table.add_row("[red]Failed (needs re-analysis)[/red]", f"{stats['failed']:,}")
+    table.add_row("[magenta]Store Failed (retry storage)[/magenta]", f"{stats['store_failed']:,}")
     table.add_row("[yellow]Pending[/yellow]", f"{stats['pending']:,}")
 
     console.print(Panel("[bold]Analysis Tracking Statistics[/bold]"))
@@ -591,6 +605,36 @@ def analysis_retry_failed():
     )
 
 
+@analysis_app.command("retry-storage")
+def analysis_retry_storage():
+    """Retry TimescaleDB storage for STORE_FAILED articles (no LLM re-analysis)."""
+    db = get_db()
+    from app.services.pipeline.llm_analysis_service import LLMAnalysisService
+
+    service = LLMAnalysisService(db)
+    stats = service.get_tracking_stats()
+
+    if stats["store_failed"] == 0:
+        console.print("[green]No STORE_FAILED articles to retry[/green]")
+        return
+
+    console.print(f"Retrying storage for {stats['store_failed']} articles...")
+
+    stored, still_failed = service.retry_store_failed()
+
+    console.print(f"[green]Stored: {stored}[/green]")
+    if still_failed > 0:
+        console.print(f"[red]Still failed: {still_failed}[/red]")
+
+    # Show updated stats
+    new_stats = service.get_tracking_stats()
+    console.print(
+        f"Success: {new_stats['success']}, "
+        f"Failed: {new_stats['failed']}, "
+        f"Store Failed: {new_stats['store_failed']}"
+    )
+
+
 @analysis_app.command("clear")
 def analysis_clear(
     all_records: bool = typer.Option(
@@ -619,7 +663,7 @@ def analysis_clear(
     from app.services.pipeline.llm_analysis_service import LLMAnalysisService
 
     service = LLMAnalysisService(db)
-    count = service.clear_tracking(
+    count, ts_deleted = service.clear_tracking(
         all_records=all_records,
         failed_only=failed,
         article_id=article_id,
@@ -627,6 +671,8 @@ def analysis_clear(
     )
 
     console.print(f"[green]Cleared {count} tracking records[/green]")
+    if ts_deleted > 0:
+        console.print(f"[green]Deleted {ts_deleted} articles from TimescaleDB[/green]")
 
 
 def _display_run_stats(stats):

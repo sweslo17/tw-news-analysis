@@ -2,6 +2,7 @@
 
 from functools import lru_cache
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -52,8 +53,20 @@ class Settings(BaseSettings):
     llm_analysis_poll_interval: int = 30  # Seconds between batch status checks
     llm_analysis_max_wait: int = 7200  # Max seconds to wait for batch (2 hours)
 
+    # TimescaleDB (analysis results storage)
+    timescale_url: str | None = None  # Set TIMESCALE_URL in .env
+
     # Pipeline Settings
     pipeline_default_days: int = 1  # Default days to fetch for quick run
+
+    @model_validator(mode="after")
+    def _normalize_timescale_url(self) -> "Settings":
+        """Auto-convert postgres:// to postgresql+psycopg2:// for SQLAlchemy."""
+        if self.timescale_url and self.timescale_url.startswith("postgres://"):
+            self.timescale_url = self.timescale_url.replace(
+                "postgres://", "postgresql+psycopg2://", 1
+            )
+        return self
 
 
 @lru_cache

@@ -314,7 +314,8 @@ class AnalysisStatus(str, enum.Enum):
 
     PENDING = "pending"
     SUCCESS = "success"
-    FAILED = "failed"
+    FAILED = "failed"  # LLM result bad — needs re-analysis
+    STORE_FAILED = "store_failed"  # LLM OK, DB transient error — retry storage only
 
 
 class FilterRule(Base):
@@ -386,6 +387,7 @@ class ArticleAnalysisTracking(Base):
         Enum(AnalysisStatus), default=AnalysisStatus.PENDING, nullable=False, index=True
     )
     error_message = Column(Text, nullable=True)
+    result_json = Column(Text, nullable=True)  # Saved for STORE_FAILED retry
 
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     updated_at = Column(

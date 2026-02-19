@@ -19,6 +19,7 @@ class ArticleFetcher:
         self,
         pipeline_run: PipelineRun,
         batch_size: int = 100,
+        limit: int | None = None,
     ) -> Generator[list[NewsArticle], None, None]:
         """
         Fetch articles for a pipeline run in batches.
@@ -26,6 +27,7 @@ class ArticleFetcher:
         Args:
             pipeline_run: The pipeline run with date range
             batch_size: Number of articles per batch
+            limit: Maximum total articles to fetch (None = no limit)
 
         Yields:
             Batches of NewsArticle objects
@@ -46,15 +48,22 @@ class ArticleFetcher:
         query = query.order_by(NewsArticle.published_at.desc())
 
         offset = 0
+        remaining = limit
         while True:
-            batch_query = query.offset(offset).limit(batch_size)
+            fetch_size = min(batch_size, remaining) if remaining is not None else batch_size
+            batch_query = query.offset(offset).limit(fetch_size)
             articles = list(self.db.execute(batch_query).scalars().all())
 
             if not articles:
                 break
 
             yield articles
-            offset += batch_size
+            offset += len(articles)
+
+            if remaining is not None:
+                remaining -= len(articles)
+                if remaining <= 0:
+                    break
 
     def fetch_articles_by_days(
         self,

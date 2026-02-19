@@ -4,7 +4,7 @@
 
 Implement the LLM Analysis stage in the pipeline: `Fetch → Rule Filter → LLM Analysis → Store`.
 
-Uses GPT-4o-mini + OpenAI Batch API with structured output to analyze news articles. The provider framework is swappable. Analysis results are NOT stored in the existing DB (will go to a separate DB later); only tracking records are persisted locally.
+Uses GPT-4o-mini + OpenAI Batch API with structured output to analyze news articles. The provider framework is swappable. Analysis results are persisted to a remote TimescaleDB instance; tracking records are kept in the local SQLite DB.
 
 ## Pipeline Flow
 
@@ -27,6 +27,8 @@ Rule Filter passed articles
        ↓
   Update tracking: success or failed (with error_message)
        ↓
+  Store successful results → TimescaleDB (if TIMESCALE_URL configured)
+       ↓
   Log statistics (success/fail counts)
 ```
 
@@ -38,13 +40,14 @@ Rule Filter passed articles
 | `schemas/llm_output.py` | Pydantic V2 structured output schema (`NewsAnalysisResult`) |
 | `app/services/pipeline/analysis/base_provider.py` | Abstract base for analysis providers |
 | `app/services/pipeline/analysis/openai_batch_provider.py` | OpenAI Batch API implementation |
+| `app/services/pipeline/analysis/result_store.py` | TimescaleDB result storage service |
 
 ## Modified Files
 
 | File | Changes |
 |------|---------|
 | `app/models.py` | Add `ArticleAnalysisTracking` model; add `batch_id` field to `PipelineRun` |
-| `app/config.py` | Add `llm_analysis_poll_interval` setting |
+| `app/config.py` | Add `llm_analysis_poll_interval`, `timescale_url` settings |
 | `app/services/pipeline/llm_analysis_service.py` | Replace placeholder with real implementation |
 | `app/services/pipeline/pipeline_orchestrator.py` | Wire LLM_ANALYSIS stage to actual logic |
 | `cli/pipeline.py` | Add `analysis` subcommand group with retry-failed, clear, status |
@@ -112,10 +115,10 @@ article_analysis_tracking
 | Command | Description |
 |---------|-------------|
 | `analysis retry-failed` | Re-submit all `failed` articles as a new batch |
-| `analysis clear --all` | Delete all tracking records |
-| `analysis clear --failed` | Delete only failed tracking records |
-| `analysis clear --article-id <ID>` | Delete tracking for specific article |
-| `analysis clear --batch-id <ID>` | Delete tracking for specific batch |
+| `analysis clear --all` | Delete all tracking records + corresponding TimescaleDB articles |
+| `analysis clear --failed` | Delete only failed tracking records (TimescaleDB unaffected — failed articles were never stored) |
+| `analysis clear --article-id <ID>` | Delete tracking + TimescaleDB data for specific article |
+| `analysis clear --batch-id <ID>` | Delete tracking + TimescaleDB data for specific batch |
 | `analysis status` | Show analysis statistics (success/failed/pending counts) |
 
 ## Error Handling
@@ -126,7 +129,14 @@ article_analysis_tracking
 
 ## Storage
 
-Analysis results are NOT stored in the existing DB. The `LLMAnalysisService` returns results in memory and logs statistics. A `store_results()` hook is reserved for future integration with a separate DB.
+Analysis results are persisted to a remote PostgreSQL+TimescaleDB instance via `ResultStoreService` (`app/services/pipeline/analysis/result_store.py`).
+
+- **Connection**: Set `TIMESCALE_URL` in `.env` (Timescale Cloud `postgres://` URIs are auto-converted)
+- **Graceful degradation**: If `TIMESCALE_URL` is not configured, results are logged but not stored; the pipeline continues normally
+- **Per-article transactions**: Each article is stored in its own transaction; failures are logged and skipped
+- **Dedup**: Application-level SELECT check on `external_id` before INSERT (TimescaleDB hypertable cannot enforce unique on non-partition columns)
+- **Source mapping**: `article.source` 直接寫入 `articles.source` 欄位（`media` 表已移除）
+- **DDL functions used**: `upsert_entity()`, `upsert_event()`, `upsert_entity_relation()`, `upsert_event_relation()`
 
 ## Prompt Caching Strategy
 
